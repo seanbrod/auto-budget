@@ -91,11 +91,6 @@ aws iam attach-role-policy \
   --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
 echo "    Attached: AmazonS3FullAccess"
 
-aws iam attach-role-policy \
-  --role-name "$IAM_ROLE_NAME" \
-  --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
-echo "    Attached: AmazonDynamoDBFullAccess"
-
 # Step 3e — Print the role ARN
 echo ""
 ROLE_ARN=$(aws iam get-role \

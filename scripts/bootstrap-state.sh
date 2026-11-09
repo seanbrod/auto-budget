@@ -23,7 +23,6 @@ source "$ENV_FILE"
 : "${AWS_REGION:?AWS_REGION is not set in ${ENV_FILE}}"
 
 STATE_BUCKET="terraform-state-${PROJECT_NAME}"
-LOCK_TABLE="terraform-state-lock-${PROJECT_NAME}"
 
 echo "==> Verifying AWS credentials..."
 aws sts get-caller-identity --query '[Account, Arn]' --output text
@@ -49,17 +48,7 @@ aws s3api put-public-access-block \
   --public-access-block-configuration \
     BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 
-echo "==> Creating DynamoDB lock table: ${LOCK_TABLE}"
-
-aws dynamodb create-table \
-  --table-name "$LOCK_TABLE" \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --region "$AWS_REGION"
-
 echo ""
 echo "Done. Add these values as GitHub Secrets:"
 echo "  TF_STATE_BUCKET = ${STATE_BUCKET}"
-echo "  TF_LOCK_TABLE   = ${LOCK_TABLE}"
 echo "  AWS_REGION      = ${AWS_REGION}"

@@ -8,12 +8,13 @@ terraform {
     }
   }
 
-  # bucket, region, and dynamodb_table are passed at runtime via -backend-config flags.
+  # bucket and region are passed at runtime via -backend-config flags.
   # In CI/CD these come from GitHub Secrets. Locally, create a backend.hcl from
   # terraform.tfvars.example and run: terraform init -backend-config=backend.hcl
   backend "s3" {
-    key     = "dev/terraform.tfstate"
-    encrypt = true
+    key          = "dev/terraform.tfstate"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 

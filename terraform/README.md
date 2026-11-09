@@ -28,7 +28,6 @@
 │     • AWS_ROLE_ARN      — OIDC role to assume               │               │
 │     • AWS_REGION        — target region                     │               │
 │     • TF_STATE_BUCKET   — S3 bucket for remote state        │               │
-│     • TF_LOCK_TABLE     — DynamoDB table for state locking  │               │
 └─────────────────────────────────────────────────────────────┼───────────────┘
                                                               │ OIDC token exchange
                                                               ▼
@@ -38,7 +37,7 @@
 │   IAM OIDC Identity Provider (token.actions.githubusercontent.com)          │
 │     └─> IAM Role: github-actions-terraform-deployer                         │
 │           • Scoped trust policy (your repo + main branch only)              │
-│           • S3 + DynamoDB access for state management                       │
+│           • S3 access for state management and native locking               │
 │           • Resource permissions for your infrastructure                    │
 │                                                                             │
 │   STATE MANAGEMENT                  TERRAFORM CONFIG                        │
@@ -46,8 +45,8 @@
 │       • Versioning enabled             main.tf      — provider, backend     │
 │       • AES256 encryption              variables.tf — input variables       │
 │       • Public access blocked          outputs.tf   — resource outputs      │
-│     DynamoDB Table (locking)                                                │
-│       • Prevents concurrent runs                                            │
+│     S3 lock file                                                            │
+│       • Prevents concurrent runs without a separate database                │
 │                                                                             │
 │   DEPLOYED RESOURCES                                                        │
 │     Default tags auto-applied: Environment, Project, ManagedBy              │
@@ -63,7 +62,7 @@
 │   └── workflows/
 │       └── deploy.yml          # CI/CD: OIDC auth, Terraform plan + apply
 ├── scripts/
-│   └── bootstrap-state.sh      # One-time setup: S3 state bucket + DynamoDB lock table
+│   └── bootstrap-state.sh      # One-time setup: S3 state bucket
 ├── .env.example                # Template for local .env (never commit .env)
 ├── terraform/
 │   ├── envs/
@@ -78,7 +77,7 @@
 
 ## Prerequisites
 
-- AWS account with permissions to create IAM roles, S3, and DynamoDB
+- AWS account with permissions to create IAM roles and S3
 - AWS CLI installed and configured locally (for the one-time bootstrap)
 - Terraform >= 1.12.0 (optional — only needed for local runs)
 
@@ -115,7 +114,7 @@ chmod +x scripts/bootstrap-state.sh
 ./scripts/bootstrap-state.sh .env.prod # or pass a custom env file
 ```
 
-The script creates the S3 bucket (with versioning, encryption, and public access blocked) and the DynamoDB lock table, then prints the exact values you'll need for Step 4.
+The script creates the S3 bucket with versioning, encryption, and public access blocked. Terraform uses an S3 lock file in this bucket for native state locking. The script then prints the exact values you'll need for Step 4.
 
 > `.env` is git-ignored. Never commit it.
 
@@ -143,7 +142,7 @@ The script handles all sub-steps automatically:
 - **3a** — Creates the OIDC Identity Provider (skips gracefully if it already exists)
 - **3b** — Generates a scoped trust policy locked to your repo + main branch
 - **3c** — Creates the IAM role
-- **3d** — Attaches S3 and DynamoDB policies for state management
+- **3d** — Attaches an S3 policy for state management and native locking
 - **3e** — Prints the Role ARN you'll need for Step 4
 
 > Add additional IAM policies to the role as you define new resources in `main.tf` (e.g., `AmazonEC2FullAccess`, `AWSLambda_FullAccess`).
@@ -157,7 +156,6 @@ In your repository: **Settings → Secrets and variables → Actions → New rep
 | `AWS_ROLE_ARN`   | The role ARN from Step 3e                          |
 | `AWS_REGION`     | e.g. `us-east-1`                                  |
 | `TF_STATE_BUCKET`| The S3 bucket name from Step 2 (`$STATE_BUCKET`)  |
-| `TF_LOCK_TABLE`  | The DynamoDB table name from Step 2 (`$LOCK_TABLE`)|
 
 No AWS access keys are stored anywhere.
 
@@ -166,7 +164,7 @@ No AWS access keys are stored anywhere.
 ```bash
 cd terraform/envs/dev
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — set project_name, state_bucket, lock_table, region
+# Edit terraform.tfvars — set project_name, state_bucket, and region
 ```
 
 > `terraform.tfvars` is git-ignored. Never commit it.
@@ -176,8 +174,7 @@ To run Terraform locally:
 ```bash
 terraform init \
   -backend-config="bucket=<your-state-bucket>" \
-  -backend-config="region=<your-region>" \
-  -backend-config="dynamodb_table=<your-lock-table>"
+  -backend-config="region=<your-region>"
 
 terraform plan
 ```
@@ -230,10 +227,10 @@ Never commit any of these files. If a `.tfstate` file is accidentally committed,
 
 **`Error acquiring the state lock`:**
 - Another run is in progress, or a previous run crashed and left a lock
-- Remove the stuck lock: `aws dynamodb delete-item --table-name <lock-table> --key '{"LockID":{"S":"<state-key>"}}'`
+- First verify no Terraform operation is running, then use `terraform force-unlock <LOCK_ID>`
 
 **`Access Denied` during Terraform init:**
-- Verify the IAM role has S3 and DynamoDB permissions for your specific bucket/table
+- Verify the IAM role has S3 permissions for the state object and its `.tflock` lock file
 - Check that the role ARN in `AWS_ROLE_ARN` matches what was created in Step 3
 
 **Resources not deleted when removed from config:**
