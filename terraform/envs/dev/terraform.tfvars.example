@@ -6,7 +6,6 @@
 #     -backend-config="bucket=<state_bucket>" \
 #     -backend-config="region=<aws_region>"
 
-project_name = "your-project-placeholder"
+project_name = "auto-budget"
 aws_region   = "us-east-1"
 environment  = "dev"
-state_bucket = "terraform-state-your-project-placeholder"
