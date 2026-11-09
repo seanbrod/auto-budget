@@ -21,7 +21,9 @@ source "$ENV_FILE"
 
 : "${AWS_REGION:?AWS_REGION is not set in ${ENV_FILE}}"
 : "${GITHUB_USERNAME:?GITHUB_USERNAME is not set in ${ENV_FILE}}"
+: "${GITHUB_OWNER_ID:?GITHUB_OWNER_ID is not set in ${ENV_FILE}}"
 : "${GITHUB_REPO:?GITHUB_REPO is not set in ${ENV_FILE}}"
+: "${GITHUB_REPO_ID:?GITHUB_REPO_ID is not set in ${ENV_FILE}}"
 : "${IAM_ROLE_NAME:?IAM_ROLE_NAME is not set in ${ENV_FILE}}"
 
 echo "==> Verifying AWS credentials..."
@@ -67,21 +69,28 @@ cat > "$TRUST_POLICY_FILE" <<EOF
       "Condition": {
         "StringEquals": {
           "${OIDC_PROVIDER_URL}:aud": "sts.amazonaws.com",
-          "${OIDC_PROVIDER_URL}:sub": "repo:${GITHUB_USERNAME}/${GITHUB_REPO}:ref:refs/heads/main"
+          "${OIDC_PROVIDER_URL}:sub": "repo:${GITHUB_USERNAME}@${GITHUB_OWNER_ID}/${GITHUB_REPO}@${GITHUB_REPO_ID}:ref:refs/heads/main"
         }
       }
     }
   ]
 }
 EOF
-echo "    Scoped to: ${GITHUB_USERNAME}/${GITHUB_REPO} (main branch only)"
+echo "    Scoped to: ${GITHUB_USERNAME}@${GITHUB_OWNER_ID}/${GITHUB_REPO}@${GITHUB_REPO_ID} (main branch only)"
 
-# Step 3c — Create the IAM role
+# Step 3c — Create or update the IAM role
 echo ""
-echo "==> Creating IAM role: ${IAM_ROLE_NAME}"
-aws iam create-role \
-  --role-name "$IAM_ROLE_NAME" \
-  --assume-role-policy-document "file://${TRUST_POLICY_FILE}"
+if aws iam get-role --role-name "$IAM_ROLE_NAME" >/dev/null 2>&1; then
+  echo "==> Updating IAM role trust policy: ${IAM_ROLE_NAME}"
+  aws iam update-assume-role-policy \
+    --role-name "$IAM_ROLE_NAME" \
+    --policy-document "file://${TRUST_POLICY_FILE}"
+else
+  echo "==> Creating IAM role: ${IAM_ROLE_NAME}"
+  aws iam create-role \
+    --role-name "$IAM_ROLE_NAME" \
+    --assume-role-policy-document "file://${TRUST_POLICY_FILE}"
+fi
 
 # Step 3d — Attach state management policies
 echo ""

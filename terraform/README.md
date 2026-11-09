@@ -122,11 +122,13 @@ The script creates the S3 bucket with versioning, encryption, and public access 
 
 This replaces the legacy IAM user + static key approach. GitHub Actions exchanges a short-lived OIDC token for temporary AWS credentials — no secrets to rotate or leak.
 
-Add the three new variables to your `.env` file (the same one used in Step 2):
+Add these variables to your `.env` file (the same one used in Step 2). GitHub repositories using immutable OIDC subjects require the numeric owner and repository IDs:
 
 ```
 GITHUB_USERNAME=your-github-username
+GITHUB_OWNER_ID=your-github-owner-id
 GITHUB_REPO=your-repo-name
+GITHUB_REPO_ID=your-github-repository-id
 IAM_ROLE_NAME=github-actions-terraform-deployer
 ```
 
@@ -140,8 +142,8 @@ chmod +x scripts/setup-oidc-role.sh
 
 The script handles all sub-steps automatically:
 - **3a** — Creates the OIDC Identity Provider (skips gracefully if it already exists)
-- **3b** — Generates a scoped trust policy locked to your repo + main branch
-- **3c** — Creates the IAM role
+- **3b** — Generates a scoped trust policy locked to your immutable repo identity + main branch
+- **3c** — Creates the IAM role, or updates its trust policy if it already exists
 - **3d** — Attaches an S3 policy for state management and native locking
 - **3e** — Prints the Role ARN you'll need for Step 4
 
