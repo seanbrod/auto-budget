@@ -9,8 +9,8 @@ terraform {
   }
 
   # bucket and region are passed at runtime via -backend-config flags.
-  # In CI/CD these come from GitHub Secrets. Locally, create a backend.hcl from
-  # terraform.tfvars.example and run: terraform init -backend-config=backend.hcl
+  # In CI/CD these come from GitHub Secrets. Locally, pass them with
+  # -backend-config flags or create an ignored backend.hcl file.
   backend "s3" {
     key          = "dev/terraform.tfstate"
     encrypt      = true
@@ -27,15 +27,5 @@ provider "aws" {
       Project     = var.project_name
       ManagedBy   = "Terraform"
     }
-  }
-}
-
-# Example resource — remove or replace with your actual infrastructure
-resource "aws_s3_bucket" "example" {
-  bucket = "${var.project_name}-${var.environment}-example"
-
-  tags = {
-    Name        = "Example bucket"
-    Description = "Placeholder — replace with your actual resources"
   }
 }

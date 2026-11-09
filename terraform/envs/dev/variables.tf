@@ -13,11 +13,4 @@ variable "environment" {
 variable "project_name" {
   description = "Project name used to namespace all resources"
   type        = string
-  default     = "your-project"
-}
-
-variable "state_bucket" {
-  description = "S3 bucket name for Terraform remote state (must be globally unique)"
-  type        = string
-  default     = "terraform-state-your-project"
 }

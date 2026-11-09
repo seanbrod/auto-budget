@@ -70,7 +70,6 @@
 │   │       ├── main.tf         # Provider, backend, resources
 │   │       ├── variables.tf    # Input variable declarations
 │   │       ├── outputs.tf      # Output values
-│   │       └── terraform.tfvars.example  # Local config template
 │   └── modules/                # Reusable Terraform modules
 └── README.md
 ```
@@ -165,8 +164,7 @@ No AWS access keys are stored anywhere.
 
 ```bash
 cd terraform/envs/dev
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — set project_name, state_bucket, and region
+# Create an ignored terraform.tfvars with project_name, aws_region, and environment
 ```
 
 > `terraform.tfvars` is git-ignored. Never commit it.
@@ -181,9 +179,11 @@ terraform init \
 terraform plan
 ```
 
+GitHub Actions supplies the same resource variables through `TF_VAR_project_name`, `TF_VAR_environment`, and `TF_VAR_aws_region` in `.github/workflows/deploy.yml`. Backend values remain separate and are passed to `terraform init` from GitHub Secrets.
+
 ### Step 6: Add Your Resources and Deploy
 
-1. Replace the example resource in `terraform/envs/dev/main.tf` with your actual infrastructure
+1. Add your application resources to `terraform/envs/dev/main.tf` or reusable modules
 2. Commit and push to `main`
 3. GitHub Actions runs automatically: plan → apply
 
