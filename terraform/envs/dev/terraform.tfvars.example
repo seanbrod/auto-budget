@@ -1,0 +1,11 @@
+# Copy this file to terraform.tfvars and fill in your actual values.
+# terraform.tfvars is git-ignored and must NEVER be committed.
+#
+# Local init command after filling in values:
+#   terraform init \
+#     -backend-config="bucket=<state_bucket>" \
+#     -backend-config="region=<aws_region>"
+
+project_name = "auto-budget"
+aws_region   = "us-east-1"
+environment  = "dev"
