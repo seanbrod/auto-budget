@@ -229,3 +229,6 @@ crash.log
 crash.*.log
 
 #misc
+node_modules/
+.npm-cache/
+*.tsbuildinfo
