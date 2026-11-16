@@ -1,6 +1,6 @@
 # Automated Budget Dashboard
 
-A personal budgeting dashboard organized by calendar year and month. Phase 1 provides a local application foundation; it does not yet connect accounts or store financial data.
+A personal budgeting dashboard organized by calendar year and month. The frontend runs locally; its protected API and household membership live in AWS. Plaid and budget data are not yet connected.
 
 ## Run locally
 
@@ -12,16 +12,15 @@ conda env create -f environment.yml
 
 If the `auto-budget` environment already exists, skip this step.
 
-Start the API in one terminal:
+After the AWS resources are deployed, configure the frontend as described below. Activate the environment and install the backend dependencies (also needed for the user setup script):
 
 ```sh
 conda activate auto-budget
 cd backend
 python -m pip install -e '.[dev]'
-python -m uvicorn app.main:app --reload --port 8000
 ```
 
-Start the frontend in another terminal:
+Start the frontend:
 
 ```sh
 cd frontend
@@ -29,12 +28,38 @@ npm ci
 npm run dev
 ```
 
-Open the address printed by Vite, usually `http://localhost:5173`, to see the dashboard. Keep both terminals running. Port 8000 serves the API, not the dashboard, so opening `http://localhost:8000/` returns 404. To check the API directly, open `http://localhost:8000/api/health`. Vite proxies `/api` requests to the API on port 8000.
+Open **http://localhost:5173/**. Cognito is configured for this exact address; another port or `127.0.0.1` will not work. The frontend calls the deployed API directly. The local API can still be started with `python -m uvicorn app.main:app --reload --port 8000` from `backend`, but its protected endpoint intentionally rejects requests outside API Gateway.
+
+## Deploy and configure Phase 2
+
+The GitHub role from the Terraform bootstrap needs permissions to manage Cognito, DynamoDB, Lambda, API Gateway, CloudWatch, IAM roles/policies, and optionally AWS Budgets. Its state-bucket policy alone is insufficient. Review and grant the needed permissions with your AWS administrator before deployment.
+
+1. Optionally add a GitHub Actions secret named `BUDGET_ALERT_EMAIL` for a $5 monthly **account-wide** actual-cost alert. If omitted, no budget is created; AWS charges and free-tier eligibility depend on account usage and current AWS pricing. Keep this secret configured for subsequent deployments so Terraform does not remove the budget.
+2. Merge the changes to `main`. The deploy workflow builds the Lambda package and creates a Terraform plan, but does **not** apply it. Review the plan in GitHub Actions. Then run the `Deploy` workflow on `main` manually with `apply` checked. It creates a fresh plan and applies that exact plan; review changes to main and the current AWS state before running it.
+3. Obtain the `api_url`, `cognito_user_pool_id`, `cognito_client_id`, `cognito_domain`, and `household_table_name` Terraform outputs from the successful apply log, or initialize the remote backend locally as described in [terraform/README.md](terraform/README.md) and run `terraform output` in `terraform/envs/dev`.
+4. From the project root, activate the Conda environment and run the following with your values. This sends a Cognito invitation email and creates a household membership; it never places a password in Terraform state. The AWS credentials used here need `cognito-idp:AdminCreateUser`, `cognito-idp:AdminGetUser`, and `dynamodb:PutItem` on the respective resources.
+
+   ```sh
+   python scripts/create-household-user.py --region us-east-1 --user-pool-id YOUR_POOL_ID --table-name YOUR_TABLE_NAME --email YOUR_EMAIL
+   ```
+
+   Save the household ID printed by the script. To add another user to that household later, run it with their email and `--household-id YOUR_HOUSEHOLD_ID`. Existing memberships are never overwritten. If a run creates the Cognito user but fails before writing the membership, rerun the same command. Cognito sends the initial temporary password by email; use the hosted sign-in page to set a new one and enroll an authenticator app for MFA when prompted.
+5. Create `frontend/.env.local` with these non-secret outputs and restart Vite:
+
+   ```text
+   VITE_API_URL=https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com
+   VITE_COGNITO_DOMAIN=https://YOUR_COGNITO_DOMAIN.auth.YOUR_REGION.amazoncognito.com
+   VITE_COGNITO_CLIENT_ID=YOUR_CLIENT_ID
+   ```
+
+   The client ID and URLs are public identifiers, not credentials. Never put passwords or Plaid secrets in `VITE_` variables; frontend variables are visible to the browser. Sign in with the invited account. The access token is kept in the browser tab's session storage and expires after one hour; sign in again after it expires.
+
+API Gateway validates Cognito tokens for `/api/me`, and the Lambda checks household membership. `/api/health` is public and contains no financial information. Only the API Gateway integration should be permitted to invoke the Lambda; do not grant untrusted principals direct invocation, because the function trusts the authorizer claims in the gateway event.
 
 ## Checks
 
-Run `ruff check .` and `pytest` in `backend`, and `npm run build` in `frontend`. GitHub Actions runs these checks on pull requests and pushes to main. The existing Terraform deployment remains separate; see [terraform/README.md](terraform/README.md).
+Run `ruff check .` and `pytest` in `backend`, and `npm run build` in `frontend`. GitHub Actions runs these checks on pull requests and pushes to main. See [terraform/README.md](terraform/README.md) for the original infrastructure setup.
 
 To build the Lambda archive, run `python package_lambda.py` from `backend` on Linux with Python 3.12 and the target Lambda architecture. It creates `backend/dist/api.zip`; CI also checks packaging. This does not deploy the API.
 
-Authentication, Plaid, storage, and application deployment will be added in later phases. Do not enter financial credentials into this scaffold.
+Plaid and financial data will be added in later phases. Do not enter financial credentials into this scaffold.

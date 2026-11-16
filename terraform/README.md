@@ -22,7 +22,7 @@
 │     Step 5: Format Check                                    │               │
 │     Step 6: Validate                                        │               │
 │     Step 7: Plan                                            │               │
-│     Step 8: Apply                                           │               │
+│     Step 8: Apply only on manual dispatch                   │               │
 │                                                             │               │
 │   GitHub Secrets (non-sensitive identifiers only):          │               │
 │     • AWS_ROLE_ARN      — OIDC role to assume               │               │
@@ -60,7 +60,7 @@
 .
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml          # CI/CD: OIDC auth, Terraform plan + apply
+│       └── deploy.yml          # CI/CD: OIDC auth, plan, manual apply
 ├── scripts/
 │   └── bootstrap-state.sh      # One-time setup: S3 state bucket
 ├── .env.example                # Template for local .env (never commit .env)
@@ -185,9 +185,10 @@ GitHub Actions supplies the same resource variables through `TF_VAR_project_name
 
 1. Add your application resources to `terraform/envs/dev/main.tf` or reusable modules
 2. Commit and push to `main`
-3. GitHub Actions runs automatically: plan → apply
+3. GitHub Actions builds the API package and runs a Terraform plan; review the result.
+4. Run the `Deploy` workflow manually on `main` with `apply` selected. It creates a fresh plan and applies it.
 
-Monitor the run under the **Actions** tab in your repository.
+Monitor the run under the **Actions** tab in your repository. See the root README for application-specific permissions and user setup. A local Terraform plan also requires the Linux-built `backend/dist/api.zip` archive.
 
 ---
 

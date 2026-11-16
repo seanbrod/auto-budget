@@ -6,7 +6,15 @@ on:
       - main
     paths:
       - 'terraform/**'
+      - 'backend/**'
       - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply the plan after reviewing the main-branch plan'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -20,10 +28,24 @@ jobs:
       TF_VAR_project_name: auto-budget
       TF_VAR_environment: dev
       TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+      TF_VAR_budget_alert_email: ${{ secrets.BUDGET_ALERT_EMAIL }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test and package API
+        working-directory: backend
+        run: |
+          python -m pip install -e '.[dev]'
+          ruff check .
+          pytest
+          python package_lambda.py
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -53,8 +75,9 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform/envs/dev
-        run: terraform plan
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
+        if: github.event_name == 'workflow_dispatch' && inputs.apply
         working-directory: terraform/envs/dev
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
