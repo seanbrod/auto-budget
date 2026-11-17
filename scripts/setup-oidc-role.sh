@@ -25,6 +25,7 @@ source "$ENV_FILE"
 : "${GITHUB_REPO:?GITHUB_REPO is not set in ${ENV_FILE}}"
 : "${GITHUB_REPO_ID:?GITHUB_REPO_ID is not set in ${ENV_FILE}}"
 : "${IAM_ROLE_NAME:?IAM_ROLE_NAME is not set in ${ENV_FILE}}"
+: "${PROJECT_NAME:?PROJECT_NAME is not set in ${ENV_FILE}}"
 
 echo "==> Verifying AWS credentials..."
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -95,10 +96,15 @@ fi
 # Step 3d — Attach state management policies
 echo ""
 echo "==> Attaching state management policies..."
-aws iam attach-role-policy \
+STATE_BUCKET="${STATE_BUCKET:-terraform-state-${PROJECT_NAME}}"
+STATE_KEY="${STATE_KEY:-dev/terraform.tfstate}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+aws iam put-role-policy \
   --role-name "$IAM_ROLE_NAME" \
-  --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
-echo "    Attached: AmazonS3FullAccess"
+  --policy-name auto-budget-terraform-state \
+  --policy-document "$(python3 "${SCRIPT_DIR}/generate-state-policy.py" --bucket "$STATE_BUCKET" --key "$STATE_KEY")"
+echo "    Scoped to state and lock in: ${STATE_BUCKET}"
+echo "    Existing broad policies, if present, must be reviewed and detached separately."
 
 # Step 3e — Print the role ARN
 echo ""
