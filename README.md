@@ -32,7 +32,7 @@ Open **http://localhost:5173/**. Cognito is configured for this exact address; a
 
 ## Deploy and configure Phase 2
 
-The GitHub role from the Terraform bootstrap needs permissions to manage Cognito, DynamoDB, Lambda, API Gateway, CloudWatch, IAM roles/policies, and optionally AWS Budgets. Its state-bucket policy alone is insufficient. Review and grant the needed permissions with your AWS administrator before deployment.
+The GitHub role from the Terraform bootstrap needs permissions to manage Cognito, DynamoDB, Lambda, API Gateway, CloudWatch, IAM roles/policies, and optionally AWS Budgets. Its state-bucket policy alone is insufficient. Review and attach the Phase 2 deployment policy using the instructions in [terraform/README.md](terraform/README.md#phase-2-deployment-permissions) before deployment.
 
 1. Optionally add a GitHub Actions secret named `BUDGET_ALERT_EMAIL` for a $5 monthly **account-wide** actual-cost alert. If omitted, no budget is created; AWS charges and free-tier eligibility depend on account usage and current AWS pricing. Keep this secret configured for subsequent deployments so Terraform does not remove the budget.
 2. Merge the changes to `main`. The deploy workflow builds the Lambda package and creates a Terraform plan, but does **not** apply it. Review the plan in GitHub Actions. Then run the `Deploy` workflow on `main` manually with `apply` checked. It creates a fresh plan and applies that exact plan; review changes to main and the current AWS state before running it.
