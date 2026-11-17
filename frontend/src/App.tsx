@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { accessToken, apiUrl, completeSignIn, configured, signIn, signOut } from './auth'
+import PlaidAccounts from './PlaidAccounts'
 
 function App() {
   const [status, setStatus] = useState('Checking sign-in…')
@@ -28,7 +29,7 @@ function App() {
     <header className="topbar"><a className="brand" href="/" aria-label="Auto Budget home"><span className="brand-mark">a<span>.</span></span><span>auto budget</span></a>{accessToken() && <button className="sign-out" onClick={signOut}>Sign out</button>}</header>
     <main><div className="heading"><div><p className="eyebrow">YOUR FINANCIAL OVERVIEW</p><h1>Make room for<br /><em>what matters.</em></h1><p className="intro">A clearer picture of your money, one month at a time.</p></div><div className="year-badge"><span>BUDGET YEAR</span><strong>{new Date().getFullYear()}</strong></div></div>
       <section className="overview" aria-label="Budget overview"><div className="section-head"><div><p className="eyebrow">THE BIG PICTURE</p><h2>Your year at a glance</h2></div><span className="status" role="status">{signedIn && <span className="dot" />}{status}</span></div>
-        <div className="empty-state"><div className="empty-icon" aria-hidden="true">↗</div>{signedIn ? <><h3>Your dashboard starts here.</h3><p>Your household is ready. Account connections, budgets, and spending insights are coming next.</p><span className="empty-label">NO FINANCIAL DATA CONNECTED</span></> : <><h3>Welcome to your budget.</h3><p>Sign in to securely access your household dashboard.</p>{configured && <button className="sign-in" onClick={() => void signIn().catch((error: Error) => setStatus(error.message))}>Sign in</button>}</>}</div>
+        {signedIn ? <PlaidAccounts /> : <div className="empty-state"><div className="empty-icon" aria-hidden="true">↗</div><h3>Welcome to your budget.</h3><p>Sign in to securely access your household dashboard.</p>{configured && <button className="sign-in" onClick={() => void signIn().catch((error: Error) => setStatus(error.message))}>Sign in</button>}</div>}
       </section><div className="footnote"><span>DESIGNED FOR THE LONG VIEW</span><span>Built one step at a time <span aria-hidden="true">✳</span></span></div>
     </main></div>
 }

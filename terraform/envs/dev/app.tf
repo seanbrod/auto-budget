@@ -97,11 +97,32 @@ resource "aws_cloudwatch_log_group" "api" {
 data "aws_iam_policy_document" "api" {
   statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.api.arn}:*"]
+    resources = ["${aws_cloudwatch_log_group.api.arn}:*", "${aws_cloudwatch_log_group.plaid_worker.arn}:*"]
   }
   statement {
-    actions   = ["dynamodb:GetItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.app.arn]
+  }
+  statement {
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${local.app_name}/plaid/sandbox/*"]
+  }
+  statement {
+    actions   = ["ssm:PutParameter", "ssm:DeleteParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${local.app_name}/plaid/sandbox/items/*"]
+  }
+  statement {
+    actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.${var.aws_region}.amazonaws.com"]
+    }
+  }
+  statement {
+    actions   = ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
+    resources = [aws_sqs_queue.plaid.arn]
   }
 }
 
@@ -118,10 +139,15 @@ resource "aws_lambda_function" "api" {
   architectures    = ["x86_64"]
   filename         = "${path.module}/../../../backend/dist/api.zip"
   source_code_hash = fileexists("${path.module}/../../../backend/dist/api.zip") ? filebase64sha256("${path.module}/../../../backend/dist/api.zip") : null
-  timeout          = 15
+  timeout          = 29
   memory_size      = 256
   environment {
-    variables = { HOUSEHOLD_TABLE = aws_dynamodb_table.app.name }
+    variables = {
+      HOUSEHOLD_TABLE        = aws_dynamodb_table.app.name
+      PLAID_PARAMETER_PREFIX = "/${local.app_name}/plaid/sandbox"
+      PLAID_QUEUE_URL        = aws_sqs_queue.plaid.url
+      PLAID_WEBHOOK_URL      = "${aws_apigatewayv2_api.app.api_endpoint}/v1/webhooks/plaid"
+    }
   }
   lifecycle {
     precondition {
@@ -137,7 +163,7 @@ resource "aws_apigatewayv2_api" "app" {
   protocol_type = "HTTP"
   cors_configuration {
     allow_origins = ["http://localhost:5173"]
-    allow_methods = ["GET", "OPTIONS"]
+    allow_methods = ["GET", "POST", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
     max_age       = 300
   }
