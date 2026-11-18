@@ -83,6 +83,12 @@ def build_policy(account: str, region: str) -> dict:
                 "Resource": "*",
             },
             {
+                "Sid": "LambdaEventSourceTags",
+                "Effect": "Allow",
+                "Action": ["lambda:ListTags", "lambda:TagResource", "lambda:UntagResource"],
+                "Resource": prefix.format(service="lambda") + "event-source-mapping:*",
+            },
+            {
                 "Sid": "ApplicationExecutionRole",
                 "Effect": "Allow",
                 "Action": [
