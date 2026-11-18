@@ -1,5 +1,6 @@
 """Household-independent sync worker; item ownership comes from stored metadata."""
 
+import hashlib
 import json
 import logging
 import os
@@ -17,6 +18,12 @@ from app.plaid_sync import collect_update
 
 SERIALIZER = TypeSerializer()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+def item_ref(item_id):
+    """Correlate events without recording the Plaid Item identifier."""
+    return hashlib.sha256(item_id.encode()).hexdigest()[:16]
 
 
 def serialize(value):
@@ -207,7 +214,8 @@ def handler(event, _context):
             page = table().scan(**args)
             for item in page["Items"]:
                 queue.send_message(QueueUrl=os.environ["PLAID_QUEUE_URL"],
-                                   MessageBody=json.dumps({"item_id": item["pk"][6:]}))
+                                   MessageBody=json.dumps({"item_id": item["pk"][6:], "source": "recovery"}))
+                logger.info("Plaid recovery queued item_ref=%s", item_ref(item["pk"][6:]))
             if "LastEvaluatedKey" not in page:
                 break
             args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
@@ -217,10 +225,14 @@ def handler(event, _context):
         try:
             payload = json.loads(record["body"], parse_float=Decimal)
             item_id = payload["item_id"]
+            source = payload.get("source")
+            if source not in ("webhook", "recovery"):
+                source = "other"
             metadata = table().get_item(Key={"pk": f"PLAID#{item_id}", "sk": "META"},
                                         ConsistentRead=True).get("Item")
             if metadata and metadata.get("status") == "active":
                 sync_item(item_id)
+                logger.info("Plaid sync completed item_ref=%s source=%s", item_ref(item_id), source)
         except Exception:  # noqa: BLE001 - preserve other records in an SQS batch
             # Never log the record body or exception: it may contain financial data.
             logger.error("Plaid synchronization failed; message will be retried")

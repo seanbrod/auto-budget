@@ -100,7 +100,7 @@ def test_failed_application_replays_published_journal(sandbox, monkeypatch):
     assert json.loads(message["Body"]) == {"item_id": "item-one"}
 
 
-def test_signed_webhook_queues_and_weekly_recovery_finds_items(sandbox, monkeypatch):
+def test_signed_webhook_queues_and_weekly_recovery_finds_items(sandbox, monkeypatch, caplog):
     _, queue = sandbox
     client = TestClient(app)
     assert client.post("/v1/plaid/exchange", json={"public_token": "test"}).status_code == 200
@@ -123,10 +123,14 @@ def test_signed_webhook_queues_and_weekly_recovery_finds_items(sandbox, monkeypa
     assert client.post("/v1/webhooks/plaid", content=body, headers={"Plaid-Verification": token}).status_code == 200
     assert client.post("/v1/webhooks/plaid", content=body + b" ", headers={"Plaid-Verification": token}).status_code == 401
     message = sqs.receive_message(QueueUrl=queue)["Messages"][0]
-    assert json.loads(message["Body"])["item_id"] == "item-one"
+    assert json.loads(message["Body"]) == {"item_id": "item-one", "source": "webhook"}
+    assert f"verified webhook queued item_ref={plaid_worker.item_ref('item-one')}" in caplog.text
+    assert "item-one" not in caplog.text
     sqs.delete_message(QueueUrl=queue, ReceiptHandle=message["ReceiptHandle"])
     assert plaid_worker.handler({"source": "auto-budget-weekly-recovery"}, None) == {"status": "queued"}
-    assert json.loads(sqs.receive_message(QueueUrl=queue)["Messages"][0]["Body"])["item_id"] == "item-one"
+    assert json.loads(sqs.receive_message(QueueUrl=queue)["Messages"][0]["Body"]) == {
+        "item_id": "item-one", "source": "recovery"}
+    assert f"recovery queued item_ref={plaid_worker.item_ref('item-one')}" in caplog.text
 
 
 def test_queue_outage_preserves_connection_and_reports_recovery(sandbox, monkeypatch):

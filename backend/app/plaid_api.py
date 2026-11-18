@@ -14,10 +14,11 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.plaid_webhook import InvalidWebhook, verify_webhook
-from app.plaid_worker import item_token, plaid_client, serialize, table
+from app.plaid_worker import item_ref, item_token, plaid_client, serialize, table
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 ITEM_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 
 
@@ -55,9 +56,12 @@ def query_all(pk, prefix):
         args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
-def enqueue(item_id):
+def enqueue(item_id, *, source=None):
+    payload = {"item_id": item_id}
+    if source:
+        payload["source"] = source
     boto3.client("sqs").send_message(QueueUrl=os.environ["PLAID_QUEUE_URL"],
-                                     MessageBody=json.dumps({"item_id": item_id}))
+                                     MessageBody=json.dumps(payload))
 
 
 @router.post("/v1/plaid/link-token")
@@ -210,5 +214,6 @@ async def webhook(request: Request):
     if (payload.get("webhook_type") == "TRANSACTIONS" and payload.get("webhook_code") == "SYNC_UPDATES_AVAILABLE"
             and isinstance(item_id, str) and ITEM_ID.fullmatch(item_id)):
         # Queue failures must return an error so Plaid retries delivery.
-        enqueue(item_id)
+        enqueue(item_id, source="webhook")
+        logger.info("Plaid verified webhook queued item_ref=%s", item_ref(item_id))
     return {"received": True}

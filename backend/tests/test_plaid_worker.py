@@ -69,7 +69,7 @@ def test_retries_published_journal_without_fetching_a_new_update(monkeypatch):
     assert db.update_item.call_args.kwargs["ExpressionAttributeValues"][":cursor"] == "new"
 
 
-def test_sqs_batch_reports_only_failed_records(monkeypatch):
+def test_sqs_batch_reports_only_failed_records(monkeypatch, caplog):
     db = Mock()
     db.get_item.return_value = {"Item": {"status": "active"}}
     monkeypatch.setattr(plaid_worker, "table", lambda: db)
@@ -78,6 +78,8 @@ def test_sqs_batch_reports_only_failed_records(monkeypatch):
             raise RuntimeError("failure")
 
     monkeypatch.setattr(plaid_worker, "sync_item", sync)
-    event = {"Records": [{"messageId": "one", "body": '{"item_id":"ok"}'},
+    event = {"Records": [{"messageId": "one", "body": '{"item_id":"ok","source":"webhook"}'},
                          {"messageId": "two", "body": '{"item_id":"bad"}'}]}
     assert plaid_worker.handler(event, None) == {"batchItemFailures": [{"itemIdentifier": "two"}]}
+    assert f"sync completed item_ref={plaid_worker.item_ref('ok')} source=webhook" in caplog.text
+    assert "source=other" not in caplog.text
