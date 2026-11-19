@@ -195,6 +195,24 @@ def test_disconnect_timeout_remains_visible_and_item_not_found_finishes_cleanup(
     assert client.get("/v1/plaid/items").json() == {"items": []}
 
 
+def test_disconnect_resumes_after_cleanup_budget_expires(sandbox, monkeypatch):
+    db, _ = sandbox
+    client = TestClient(app)
+    assert client.post("/v1/plaid/exchange", json={"public_token": "test"}).status_code == 200
+    with db.batch_writer() as batch:
+        for i in range(50):
+            batch.put_item(Item={"pk": "PLAID#item-one", "sk": f"TRANSACTION#{i:03}"})
+    original = plaid_api.delete_item_rows
+    monkeypatch.setattr(plaid_api, "delete_item_rows", lambda *_: False)
+    assert client.delete("/v1/plaid/items/item-one").json() == {"status": "cleanup_pending"}
+    assert client.get("/v1/plaid/items").json()["items"] == [{"item_id": "item-one", "status": "deleting"}]
+    item = db.get_item(Key={"pk": "PLAID#item-one", "sk": "META"})["Item"]
+    assert item["remote_removed"] and "lease_owner" not in item
+    monkeypatch.setattr(plaid_api, "delete_item_rows", original)
+    assert client.delete("/v1/plaid/items/item-one").json() == {"status": "disconnected"}
+    assert client.get("/v1/plaid/items").json() == {"items": []}
+
+
 def test_exchange_recovers_when_transaction_committed_but_response_lost(sandbox, monkeypatch):
     original = boto3.client
     dynamodb = original("dynamodb")

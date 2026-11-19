@@ -34,9 +34,9 @@ export default function PlaidAccounts() {
     if (!window.confirm('Disconnect this Sandbox connection and remove its stored test data?')) return
     setBusy(true)
     try {
-      await api(`/v1/plaid/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' })
+      const result: { status: string } = await api(`/v1/plaid/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' })
       await refresh()
-      setMessage('Sandbox connection disconnected.')
+      setMessage(result.status === 'cleanup_pending' ? 'Disconnect is in progress. Select Retry disconnect to continue cleanup.' : 'Sandbox connection disconnected.')
     } catch { setMessage('Disconnect is incomplete. Refresh and retry; investigate in Plaid if it continues to fail.'); void refresh().catch(() => undefined) }
     finally { setBusy(false) }
   }
