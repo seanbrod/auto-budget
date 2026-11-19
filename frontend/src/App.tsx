@@ -27,10 +27,10 @@ function App() {
 
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="/" aria-label="Auto Budget home"><span className="brand-mark">a<span>.</span></span><span>auto budget</span></a>{accessToken() && <button className="sign-out" onClick={signOut}>Sign out</button>}</header>
-    <main><div className="heading"><div><p className="eyebrow">YOUR FINANCIAL OVERVIEW</p><h1>Make room for<br /><em>what matters.</em></h1><p className="intro">A clearer picture of your money, one month at a time.</p></div><div className="year-badge"><span>BUDGET YEAR</span><strong>{new Date().getFullYear()}</strong></div></div>
-      <section className="overview" aria-label="Budget overview"><div className="section-head"><div><p className="eyebrow">THE BIG PICTURE</p><h2>Your year at a glance</h2></div><span className="status" role="status">{signedIn && <span className="dot" />}{status}</span></div>
+    <main><div className="heading"><div><p className="eyebrow">PLAID SANDBOX</p><h1>Test your<br /><em>connections.</em></h1><p className="intro">Connect test accounts and check their balances.</p></div></div>
+      <section className="overview" aria-label="Sandbox connections"><div className="section-head"><div><p className="eyebrow">TEST DATA ONLY</p><h2>Sandbox connections</h2></div><span className="status" role="status">{signedIn && <span className="dot" />}{status}</span></div>
         {signedIn ? <PlaidAccounts /> : <div className="empty-state"><div className="empty-icon" aria-hidden="true">↗</div><h3>Welcome to your budget.</h3><p>Sign in to securely access your household dashboard.</p>{configured && <button className="sign-in" onClick={() => void signIn().catch((error: Error) => setStatus(error.message))}>Sign in</button>}</div>}
-      </section><div className="footnote"><span>DESIGNED FOR THE LONG VIEW</span><span>Built one step at a time <span aria-hidden="true">✳</span></span></div>
+      </section>
     </main></div>
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { accessToken, apiUrl } from './auth'
 
 type Account = { account_id: string; name: string; mask?: string | null; type: string; balances: { current?: number | null; iso_currency_code?: string | null } }
+type Item = { item_id: string; status: string }
 type PlaidHandler = { open: () => void; destroy: () => void }
 declare global {
   interface Window { Plaid?: { create: (options: { token: string; onSuccess: (token: string) => void; onExit: () => void }) => PlaidHandler } }
@@ -17,16 +18,16 @@ async function api(path: string, init: RequestInit = {}) {
 
 export default function PlaidAccounts() {
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [items, setItems] = useState<string[]>([])
+  const [items, setItems] = useState<Item[]>([])
   const [message, setMessage] = useState('Sandbox connections use test data only.')
   const [busy, setBusy] = useState(false)
 
   async function refresh() {
-    const [accountResult, itemResult]: [{ accounts: Account[] }, { items: { item_id: string }[] }] = await Promise.all([
+    const [accountResult, itemResult]: [{ accounts: Account[] }, { items: Item[] }] = await Promise.all([
       api('/v1/accounts'), api('/v1/plaid/items'),
     ])
     setAccounts(accountResult.accounts)
-    setItems(itemResult.items.map(item => item.item_id))
+    setItems(itemResult.items)
   }
 
   async function disconnect(itemId: string) {
@@ -36,7 +37,7 @@ export default function PlaidAccounts() {
       await api(`/v1/plaid/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' })
       await refresh()
       setMessage('Sandbox connection disconnected.')
-    } catch { setMessage('Could not disconnect the Sandbox connection. Please try again.') }
+    } catch { setMessage('Disconnect is incomplete. Refresh and retry; investigate in Plaid if it continues to fail.'); void refresh().catch(() => undefined) }
     finally { setBusy(false) }
   }
 
@@ -65,7 +66,7 @@ export default function PlaidAccounts() {
               void refresh().catch(() => undefined)
               handler.destroy()
             })
-            .catch(() => { setMessage('Could not finish connecting the Sandbox account.'); handler.destroy() })
+            .catch(() => { setMessage('Connection status is uncertain. Refresh accounts and investigate before connecting again.'); void refresh().catch(() => undefined); handler.destroy() })
             .finally(() => setBusy(false))
         },
         onExit: () => { handler.destroy(); setBusy(false) },
@@ -79,6 +80,6 @@ export default function PlaidAccounts() {
     <button className="sign-in" disabled={busy} onClick={() => void connect()}>Connect test account</button>{' '}
     <button className="sign-in" onClick={() => void refresh().catch(() => setMessage('Could not refresh Sandbox accounts.'))}>Refresh accounts</button>
     {accounts.length > 0 && <ul>{accounts.map(account => <li key={account.account_id}>{account.name} {account.mask && `••${account.mask}`} — {account.balances.current == null ? 'Balance unavailable' : `${account.balances.iso_currency_code || 'USD'} ${account.balances.current.toFixed(2)}`}</li>)}</ul>}
-    {items.length > 0 && <div><p>Sandbox connections</p>{items.map(item => <div key={item}><span>Connection …{item.slice(-8)}</span>{' '}<button disabled={busy} onClick={() => void disconnect(item)}>Disconnect</button></div>)}</div>}
+    {items.length > 0 && <div><p>Sandbox connections</p>{items.map(item => <div key={item.item_id}><span>Connection …{item.item_id.slice(-8)}{item.status !== 'active' && ' — disconnect incomplete'}</span>{' '}<button disabled={busy} onClick={() => void disconnect(item.item_id)}>{item.status === 'deleting' ? 'Retry disconnect' : 'Disconnect'}</button></div>)}</div>}
   </div>
 }
