@@ -83,6 +83,8 @@ def test_sqs_batch_reports_only_failed_records(monkeypatch, caplog):
     assert plaid_worker.handler(event, None) == {"batchItemFailures": [{"itemIdentifier": "two"}]}
     assert f"sync completed item_ref={plaid_worker.item_ref('ok')} source=webhook" in caplog.text
     assert "source=other" not in caplog.text
+    assert "reason=UNEXPECTED_ERROR" in caplog.text
+    assert "failure" not in caplog.text
 
 
 def test_batches_split_on_size_and_duplicate_keys(monkeypatch):

@@ -13,7 +13,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 
-from app.plaid_client import PlaidClient
+from app.plaid_client import PlaidClient, PlaidError
 from app.plaid_sync import collect_update
 
 SERIALIZER = TypeSerializer()
@@ -255,8 +255,19 @@ def handler(event, _context):
             if metadata and metadata.get("status") == "active":
                 sync_item(item_id)
                 logger.info("Plaid sync completed item_ref=%s source=%s", item_ref(item_id), source)
-        except Exception:  # noqa: BLE001 - preserve other records in an SQS batch
-            # Never log the record body or exception: it may contain financial data.
-            logger.error("Plaid synchronization failed; message will be retried")
+        except Exception as exc:  # noqa: BLE001 - preserve other records in an SQS batch
+            # Error messages and record bodies can contain financial data. Log
+            # only a fixed, allowlisted classification, never the exception.
+            if isinstance(exc, PlaidError):
+                reason = exc.code if exc.code in {"PRODUCT_NOT_READY", "ITEM_LOGIN_REQUIRED",
+                                                   "ITEM_NOT_FOUND", "PLAID_UNAVAILABLE"} else "PLAID_ERROR"
+            elif isinstance(exc, ClientError):
+                code = exc.response.get("Error", {}).get("Code")
+                reason = code if code in {"AccessDeniedException", "TransactionCanceledException",
+                                          "ProvisionedThroughputExceededException", "ThrottlingException",
+                                          "ParameterNotFound"} else "AWS_ERROR"
+            else:
+                reason = "UNEXPECTED_ERROR"
+            logger.error("Plaid synchronization failed; message will be retried reason=%s", reason)
             failed.append({"itemIdentifier": record["messageId"]})
     return {"batchItemFailures": failed}
