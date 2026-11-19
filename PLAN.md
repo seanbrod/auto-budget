@@ -26,12 +26,13 @@ Terraform provisions the Cognito user pool, API Gateway, Lambda, DynamoDB, loggi
 - A simulated AWS/Plaid test suite and a real disposable Sandbox Item test passed. The user also completed an interactive Link check without errors.
 - A live signed `SYNC_UPDATES_AVAILABLE` webhook was verified through queueing and worker sync on 2026-11-18 using correlated logs.
 - A temporary one-minute EventBridge rule exercised the deployed recovery handler and imported a simulated missed transaction on 2026-11-18. The actual seven-day schedule has not been observed firing; it was enabled with the expected target when inspected that day. See `PROGRESS.md` for evidence and cleanup.
-- Review the worker's five-minute timeout, per-row DynamoDB writes, replay and cleanup behavior for large initial histories, and ambiguous disconnect/exchange failures before production use. The dead-letter alarm has no notification action.
+- The worker stages and replays data in small lease-checked DynamoDB transactions. A 200-transaction Sandbox initial sync and batched disconnect passed live; larger histories and the five-minute timeout still need evaluation before production. Interrupted staging and ambiguous AWS write responses are covered by simulated tests; an exchange response lost before the Item is saved can still require manual investigation.
+- Three initial queued syncs failed with unknown causes before failure classifications were deployed. Three subsequent queued syncs succeeded; the prior failures remain unexplained. The dead-letter alarm has no notification action. Review these and other recovery, security, and cost gaps before Phase 5.
 - Keep the application hard-coded to Sandbox until the user reviews their actual Plaid account's Production access, plan, Item limits, and quoted Transactions price. Never use `/transactions/refresh` or paid Balance, Recurring Transactions, or Enrich add-ons unless the user explicitly changes that decision.
 
 ## Phase 4: dashboard MVP — next phase
 
-Before implementation, inspect the current schema and agree on a small end-to-end slice. The original plan calls for the following authenticated API interfaces:
+Phase 4 remains Sandbox-only. Before implementation, inspect the current schema and agree on a small end-to-end slice. The original plan calls for the following authenticated API interfaces:
 
 - `GET /v1/dashboard?month=YYYY-MM` and `GET /v1/transactions` with pagination and filters.
 - `PATCH /v1/transactions/{transaction_id}`, category CRUD, vendor-rule CRUD, `POST /v1/category-rules/preview`, and `POST /v1/category-rules/{rule_id}/apply`.
