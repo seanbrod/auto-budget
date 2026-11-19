@@ -10,6 +10,14 @@ from pydantic import BaseModel
 app = FastAPI(title="Auto Budget API", version="0.1.0")
 
 
+@app.middleware("http")
+async def prevent_financial_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/v1/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 class HealthResponse(BaseModel):
     status: str
 
@@ -44,7 +52,9 @@ def me(request: Request, response: Response) -> dict[str, str]:
 
 from app.budget_api import router as budget_router
 from app.plaid_api import router as plaid_router
+from app.transactions_api import router as transactions_router
 
 app.include_router(plaid_router)
 app.include_router(budget_router)
+app.include_router(transactions_router)
 handler = Mangum(app, lifespan="off")

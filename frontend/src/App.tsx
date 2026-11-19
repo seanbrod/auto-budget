@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { accessToken, apiUrl, completeSignIn, configured, signIn, signOut } from './auth'
 import PlaidAccounts from './PlaidAccounts'
 import Budget from './Budget'
+import Transactions from './Transactions'
 
 function App() {
   const [status, setStatus] = useState('Checking sign-in…')
@@ -33,6 +34,7 @@ function App() {
         {signedIn ? <PlaidAccounts /> : <div className="empty-state"><div className="empty-icon" aria-hidden="true">↗</div><h3>Welcome to your budget.</h3><p>Sign in to securely access your household dashboard.</p>{configured && <button className="sign-in" onClick={() => void signIn().catch((error: Error) => setStatus(error.message))}>Sign in</button>}</div>}
       </section>
       {signedIn && <Budget />}
+      {signedIn && <Transactions />}
     </main></div>
 }
 
