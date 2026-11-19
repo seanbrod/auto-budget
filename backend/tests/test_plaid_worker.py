@@ -31,7 +31,7 @@ def test_cursor_advances_only_after_writes(monkeypatch):
     monkeypatch.setattr(plaid_worker, "collect_update", lambda fetch, cursor: SyncUpdate(
         [{"transaction_id": "a"}], [{"transaction_id": "b"}],
         [{"transaction_id": "c"}], "new"))
-    monkeypatch.setattr(plaid_worker, "checked_write", lambda item, owner, operation: operations.append(operation))
+    monkeypatch.setattr(plaid_worker, "checked_write", lambda item, owner, batch: operations.extend(batch))
     db.update_item.side_effect = lambda **kw: operations.append(kw)
     plaid_worker.sync_item("item-1")
     assert len(operations) == 10
@@ -62,7 +62,7 @@ def test_retries_published_journal_without_fetching_a_new_update(monkeypatch):
         "lease-2", {"cursor": "old", "pending_sync": {"id": "journal", "cursor": "new", "count": 1}}))
     db.query.return_value = {"Items": [{"sk": "stage-1", "kind": "TRANSACTION", "data": {"transaction_id": "a"}}]}
     writes = []
-    monkeypatch.setattr(plaid_worker, "checked_write", lambda item, owner, operation: writes.append(operation))
+    monkeypatch.setattr(plaid_worker, "checked_write", lambda item, owner, batch: writes.extend(batch))
     plaid_worker.sync_item("item-1")
     client.call.assert_not_called()
     assert len(writes) == 1
@@ -83,3 +83,23 @@ def test_sqs_batch_reports_only_failed_records(monkeypatch, caplog):
     assert plaid_worker.handler(event, None) == {"batchItemFailures": [{"itemIdentifier": "two"}]}
     assert f"sync completed item_ref={plaid_worker.item_ref('ok')} source=webhook" in caplog.text
     assert "source=other" not in caplog.text
+
+
+def test_batches_split_on_size_and_duplicate_keys(monkeypatch):
+    batches = []
+    monkeypatch.setattr(plaid_worker, "checked_write", lambda item, owner, batch: batches.append(batch))
+    def operation(number):
+        return {"Delete": {"Key": plaid_worker.serialize({"pk": "item", "sk": str(number)})}}
+
+    plaid_worker.checked_batches("item", "owner", [operation(i) for i in range(9)] + [operation(8)])
+    assert [len(batch) for batch in batches] == [8, 1, 1]
+
+
+def test_large_history_uses_bounded_batches(monkeypatch):
+    sizes = []
+    monkeypatch.setattr(plaid_worker, "checked_write", lambda item, owner, batch: sizes.append(len(batch)))
+    operations = ({"Put": {"Item": plaid_worker.serialize({"pk": "item", "sk": f"row-{i}"})}}
+                  for i in range(1000))
+    plaid_worker.checked_batches("item", "owner", operations)
+    assert len(sizes) == 125
+    assert max(sizes) == 8

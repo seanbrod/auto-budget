@@ -13,6 +13,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.plaid_client import PlaidError
 from app.plaid_webhook import InvalidWebhook, verify_webhook
 from app.plaid_worker import item_ref, item_token, plaid_client, serialize, table
 
@@ -88,22 +89,41 @@ def exchange(body: ExchangeRequest, request: Request, response: Response):
     ssm = boto3.client("ssm")
     try:
         ssm.put_parameter(Name=parameter, Value=token, Type="SecureString", Tier="Standard", Overwrite=False)
-    except Exception:
-        # If the token cannot be saved, try to revoke it while it is still in memory.
+    except (BotoCoreError, ClientError, OSError):
+        # A timeout may mean the write succeeded. Do not revoke a token until
+        # we know whether the intended value was stored.
         try:
-            client.call("/item/remove", {"access_token": token})
-        except Exception:  # noqa: BLE001 - do not replace the storage error
-            logger.error("Plaid connection cleanup failed after credential storage failure")
-        raise
+            saved = ssm.get_parameter(Name=parameter, WithDecryption=True)["Parameter"]["Value"]
+        except (BotoCoreError, ClientError, OSError):
+            logger.error("Plaid credential storage needs investigation item_ref=%s", item_ref(item_id))
+            raise HTTPException(503, "Connection status is uncertain; investigate before reconnecting") from None
+        if saved != token:
+            logger.error("Plaid credential storage conflict item_ref=%s", item_ref(item_id))
+            raise HTTPException(503, "Connection status is uncertain; investigate before reconnecting") from None
     # An ambiguous transaction failure must not revoke a potentially active Item.
-    boto3.client("dynamodb").transact_write_items(TransactItems=[
+    transaction = [
             {"Put": {"TableName": os.environ["HOUSEHOLD_TABLE"], "Item": serialize({
                 "pk": f"PLAID#{item_id}", "sk": "META", "household_id": household_id, "status": "active"}),
                 "ConditionExpression": "attribute_not_exists(pk)"}},
             {"Put": {"TableName": os.environ["HOUSEHOLD_TABLE"], "Item": serialize({
                 "pk": f"HOUSEHOLD#{household_id}", "sk": f"PLAID#{item_id}", "item_id": item_id}),
                 "ConditionExpression": "attribute_not_exists(pk)"}},
-    ])
+    ]
+    try:
+        boto3.client("dynamodb").transact_write_items(TransactItems=transaction)
+    except (BotoCoreError, ClientError, OSError):
+        # A lost response may hide a committed transaction. Strong reads of
+        # both records distinguish that case from an incomplete setup.
+        try:
+            meta = table().get_item(Key={"pk": f"PLAID#{item_id}", "sk": "META"},
+                                    ConsistentRead=True).get("Item", {})
+            link = table().get_item(Key={"pk": f"HOUSEHOLD#{household_id}", "sk": f"PLAID#{item_id}"},
+                                    ConsistentRead=True).get("Item", {})
+        except (BotoCoreError, ClientError, OSError):
+            meta, link = {}, {}
+        if meta.get("household_id") != household_id or link.get("item_id") != item_id:
+            logger.error("Plaid connection setup needs investigation item_ref=%s", item_ref(item_id))
+            raise HTTPException(503, "Connection status is uncertain; investigate before reconnecting") from None
     try:
         enqueue(item_id)
     except (BotoCoreError, ClientError, OSError):
@@ -117,7 +137,13 @@ def exchange(body: ExchangeRequest, request: Request, response: Response):
 @router.get("/v1/plaid/items")
 def items(request: Request, response: Response):
     household_id = household(request, response)
-    return {"items": [{"item_id": item["item_id"]} for item in query_all(f"HOUSEHOLD#{household_id}", "PLAID#")]}
+    result = []
+    for entry in query_all(f"HOUSEHOLD#{household_id}", "PLAID#"):
+        meta = table().get_item(Key={"pk": f"PLAID#{entry['item_id']}", "sk": "META"},
+                                ConsistentRead=True).get("Item", {})
+        if meta.get("household_id") == household_id:
+            result.append({"item_id": entry["item_id"], "status": meta.get("status", "unknown")})
+    return {"items": result}
 
 
 @router.post("/v1/plaid/items/{item_id}/sync", status_code=202)
@@ -155,7 +181,12 @@ def delete_item(item_id: str, request: Request, response: Response):
         if not item.get("remote_removed"):
             # A rejected token does not prove the subscription ended. Keep the
             # local connection for recovery instead of claiming success.
-            plaid_client().call("/item/remove", {"access_token": item_token(item_id)})
+            try:
+                plaid_client().call("/item/remove", {"access_token": item_token(item_id)})
+            except PlaidError as exc:
+                # Plaid documents ITEM_NOT_FOUND as already removed or revoked.
+                if exc.code != "ITEM_NOT_FOUND":
+                    raise
             table().update_item(Key=key, UpdateExpression="SET remote_removed = :yes",
                                 ConditionExpression="lease_owner = :owner AND lease_until > :now",
                                 ExpressionAttributeValues={":yes": True, ":owner": owner, ":now": int(time.time())})
@@ -191,8 +222,10 @@ def accounts(request: Request, response: Response):
     accounts = []
     for entry in query_all(f"HOUSEHOLD#{household_id}", "PLAID#"):
         item_id = entry["item_id"]
-        owned_item(household_id, item_id)
-        accounts.extend(row["data"] for row in query_all(f"PLAID#{item_id}", "ACCOUNT#"))
+        item = table().get_item(Key={"pk": f"PLAID#{item_id}", "sk": "META"},
+                                ConsistentRead=True).get("Item", {})
+        if item.get("household_id") == household_id and item.get("status") == "active":
+            accounts.extend(row["data"] for row in query_all(f"PLAID#{item_id}", "ACCOUNT#"))
     return {"accounts": accounts}
 
 

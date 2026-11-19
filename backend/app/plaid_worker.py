@@ -69,8 +69,8 @@ def acquire(item_id):
     return owner, result["Attributes"]
 
 
-def checked_write(item_id, owner, operation):
-    """Only the active lease holder may mutate item data, even after expiry."""
+def checked_write(item_id, owner, operations):
+    """Write a small batch only while the caller holds the active lease."""
     boto3.client("dynamodb").transact_write_items(TransactItems=[
         {"ConditionCheck": {
             "TableName": os.environ["HOUSEHOLD_TABLE"],
@@ -78,8 +78,27 @@ def checked_write(item_id, owner, operation):
             "ConditionExpression": "lease_owner = :owner AND lease_until > :now AND #status = :active",
             "ExpressionAttributeNames": {"#status": "status"},
             "ExpressionAttributeValues": serialize({":owner": owner, ":now": int(time.time()), ":active": "active"}),
-        }}, operation,
+        }}, *operations,
     ])
+
+
+def checked_batches(item_id, owner, operations):
+    # Eight maximum-size DynamoDB items fit within the 4 MB transaction limit.
+    # A transaction cannot operate on the same key twice.
+    batch, keys, size = [], set(), 0
+    for operation in operations:
+        action = operation.get("Put") or operation["Delete"]
+        key = action.get("Key") or {k: action["Item"][k] for k in ("pk", "sk")}
+        identity = (key["pk"]["S"], key["sk"]["S"])
+        operation_size = len(json.dumps(operation).encode("utf-8"))
+        if batch and (len(batch) == 8 or identity in keys or size + operation_size > 3_000_000):
+            checked_write(item_id, owner, batch)
+            batch, keys, size = [], set(), 0
+        batch.append(operation)
+        keys.add(identity)
+        size += operation_size
+    if batch:
+        checked_write(item_id, owner, batch)
 
 
 def clean_orphaned_journals(item_id, owner, pending):
@@ -89,11 +108,10 @@ def clean_orphaned_journals(item_id, owner, pending):
             "ConsistentRead": True}
     while True:
         page = table().query(**args)
-        for row in page["Items"]:
-            if keep_prefix and row["sk"].startswith(keep_prefix):
-                continue
-            checked_write(item_id, owner, {"Delete": {"TableName": os.environ["HOUSEHOLD_TABLE"],
-                          "Key": serialize({"pk": f"PLAID#{item_id}", "sk": row["sk"]})}})
+        operations = ({"Delete": {"TableName": os.environ["HOUSEHOLD_TABLE"],
+                       "Key": serialize({"pk": f"PLAID#{item_id}", "sk": row["sk"]})}}
+                      for row in page["Items"] if not keep_prefix or not row["sk"].startswith(keep_prefix))
+        checked_batches(item_id, owner, operations)
         if "LastEvaluatedKey" not in page:
             return
         args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
@@ -133,15 +151,17 @@ def sync_item(item_id):
                 account_query["ExclusiveStartKey"] = page["LastEvaluatedKey"]
             stage_id = uuid.uuid4().hex
             number = 0
+            staged_writes = []
             for kind, entries in (("TRANSACTION", update.added), ("TRANSACTION", update.modified),
                                   ("ACCOUNT", accounts), ("REMOVE", update.removed),
                                   ("REMOVE_ACCOUNT", old_accounts)):
                 for entry in entries:
                     record = {"pk": f"PLAID#{item_id}", "sk": f"STAGED#{stage_id}#{number:010d}",
                               "kind": kind, "data": entry}
-                    checked_write(item_id, owner, {"Put": {"TableName": os.environ["HOUSEHOLD_TABLE"],
-                                                           "Item": serialize(record)}})
+                    staged_writes.append({"Put": {"TableName": os.environ["HOUSEHOLD_TABLE"],
+                                                  "Item": serialize(record)}})
                     number += 1
+            checked_batches(item_id, owner, staged_writes)
             pending = {"id": stage_id, "cursor": update.next_cursor, "count": number}
             # Publish the journal only after all entries exist. Before this point,
             # a crash cannot have changed visible account or transaction rows.
@@ -164,6 +184,7 @@ def sync_item(item_id):
             query["ExclusiveStartKey"] = result["LastEvaluatedKey"]
         if len(staged) != pending["count"]:
             raise RuntimeError("Incomplete synchronization journal")
+        replay_writes = []
         for row in staged:
             kind, entry = row["kind"], row["data"]
             identifier = entry["account_id" if kind in ("ACCOUNT", "REMOVE_ACCOUNT") else "transaction_id"]
@@ -176,7 +197,8 @@ def sync_item(item_id):
                                      "Item": serialize(record_key | {"data": entry})}}
             else:
                 raise ValueError("Invalid synchronization journal")
-            checked_write(item_id, owner, operation)
+            replay_writes.append(operation)
+        checked_batches(item_id, owner, replay_writes)
         table().update_item(
             Key={"pk": f"PLAID#{item_id}", "sk": "META"},
             UpdateExpression="SET #cursor = :cursor, last_sync = :now REMOVE lease_owner, lease_until, pending_sync",

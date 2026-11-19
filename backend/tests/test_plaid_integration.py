@@ -14,6 +14,7 @@ from moto import mock_aws
 
 from app import plaid_api, plaid_worker
 from app.main import app
+from app.plaid_client import PlaidError
 
 
 @pytest.fixture
@@ -60,7 +61,7 @@ def test_exchange_queue_sync_accounts_and_disconnect(sandbox):
     response = client.post("/v1/plaid/exchange", json={"public_token": "public-test"})
     assert response.status_code == 200
     assert "sandbox-access-token" not in response.text
-    assert client.get("/v1/plaid/items").json() == {"items": [{"item_id": "item-one"}]}
+    assert client.get("/v1/plaid/items").json() == {"items": [{"item_id": "item-one", "status": "active"}]}
     message = boto3.client("sqs").receive_message(QueueUrl=queue)["Messages"][0]
     assert plaid_worker.handler({"Records": [{"messageId": "msg", "body": message["Body"]}]}, None) == {
         "batchItemFailures": []}
@@ -81,13 +82,13 @@ def test_failed_application_replays_published_journal(sandbox, monkeypatch):
     original = plaid_worker.checked_write
     failed = False
 
-    def fail_once(item_id, owner, operation):
+    def fail_once(item_id, owner, operations):
         nonlocal failed
-        put = operation.get("Put", {}).get("Item", {})
-        if put.get("sk", {}).get("S", "").startswith("TRANSACTION#") and not failed:
+        if any(operation.get("Put", {}).get("Item", {}).get("sk", {}).get("S", "").startswith("TRANSACTION#")
+               for operation in operations) and not failed:
             failed = True
             raise RuntimeError("simulated interruption")
-        original(item_id, owner, operation)
+        original(item_id, owner, operations)
 
     monkeypatch.setattr(plaid_worker, "checked_write", fail_once)
     assert plaid_worker.handler(event, None) == {"batchItemFailures": [{"itemIdentifier": "msg"}]}
@@ -98,6 +99,36 @@ def test_failed_application_replays_published_journal(sandbox, monkeypatch):
     assert item["cursor"] == "cursor-one" and "pending_sync" not in item
     assert "Item" not in db.get_item(Key={"pk": "PLAID#item-one", "sk": "STAGED#abandoned#0000000000"})
     assert json.loads(message["Body"]) == {"item_id": "item-one"}
+
+
+def test_interrupted_staging_discards_orphans_before_retry(sandbox, monkeypatch):
+    db, queue = sandbox
+    assert TestClient(app).post("/v1/plaid/exchange", json={"public_token": "test"}).status_code == 200
+    original_write = plaid_worker.checked_write
+    calls = 0
+    def interrupt_second_batch(item_id, owner, operations):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated interruption")
+        original_write(item_id, owner, operations)
+
+    from app.plaid_sync import SyncUpdate
+    monkeypatch.setattr(plaid_worker, "collect_update", lambda fetch, cursor: SyncUpdate(
+        [{"transaction_id": f"txn-{i}"} for i in range(10)], [], [], "new-cursor"))
+    monkeypatch.setattr(plaid_worker, "checked_write", interrupt_second_batch)
+    message = boto3.client("sqs").receive_message(QueueUrl=queue)["Messages"][0]
+    event = {"Records": [{"messageId": "msg", "body": message["Body"]}]}
+    assert plaid_worker.handler(event, None)["batchItemFailures"]
+    item = db.get_item(Key={"pk": "PLAID#item-one", "sk": "META"})["Item"]
+    assert "cursor" not in item and "pending_sync" not in item
+    monkeypatch.setattr(plaid_worker, "checked_write", original_write)
+    assert plaid_worker.handler(event, None) == {"batchItemFailures": []}
+    item = db.get_item(Key={"pk": "PLAID#item-one", "sk": "META"})["Item"]
+    assert item["cursor"] == "new-cursor"
+    rows = db.query(KeyConditionExpression=plaid_worker.Key("pk").eq("PLAID#item-one"))["Items"]
+    assert sum(row["sk"].startswith("TRANSACTION#") for row in rows) == 10
+    assert not any(row["sk"].startswith("STAGED#") for row in rows)
 
 
 def test_signed_webhook_queues_and_weekly_recovery_finds_items(sandbox, monkeypatch, caplog):
@@ -141,4 +172,56 @@ def test_queue_outage_preserves_connection_and_reports_recovery(sandbox, monkeyp
     client = TestClient(app)
     response = client.post("/v1/plaid/exchange", json={"public_token": "test"})
     assert response.status_code == 200 and response.json()["status"] == "recovery_pending"
-    assert client.get("/v1/plaid/items").json()["items"] == [{"item_id": "item-one"}]
+    assert client.get("/v1/plaid/items").json()["items"] == [{"item_id": "item-one", "status": "active"}]
+
+
+def test_disconnect_timeout_remains_visible_and_item_not_found_finishes_cleanup(sandbox, monkeypatch):
+    client = TestClient(app, raise_server_exceptions=False)
+    assert client.post("/v1/plaid/exchange", json={"public_token": "test"}).status_code == 200
+    class FailedRemoval:
+        def call(self, path, data):
+            raise PlaidError("PLAID_UNAVAILABLE")
+
+    monkeypatch.setattr(plaid_api, "plaid_client", lambda: FailedRemoval())
+    assert client.delete("/v1/plaid/items/item-one").status_code == 500
+    assert client.get("/v1/plaid/items").json()["items"] == [{"item_id": "item-one", "status": "deleting"}]
+    assert client.get("/v1/accounts").json() == {"accounts": []}
+    class Removed:
+        def call(self, path, data):
+            raise PlaidError("ITEM_NOT_FOUND")
+
+    monkeypatch.setattr(plaid_api, "plaid_client", lambda: Removed())
+    assert client.delete("/v1/plaid/items/item-one").status_code == 200
+    assert client.get("/v1/plaid/items").json() == {"items": []}
+
+
+def test_exchange_recovers_when_transaction_committed_but_response_lost(sandbox, monkeypatch):
+    original = boto3.client
+    dynamodb = original("dynamodb")
+    transact = dynamodb.transact_write_items
+    def lost_response(**kwargs):
+        transact(**kwargs)
+        raise EndpointConnectionError(endpoint_url="https://example.invalid")
+
+    monkeypatch.setattr(dynamodb, "transact_write_items", lost_response)
+    monkeypatch.setattr(boto3, "client", lambda service, *args, **kwargs:
+                        dynamodb if service == "dynamodb" else original(service, *args, **kwargs))
+    client = TestClient(app)
+    assert client.post("/v1/plaid/exchange", json={"public_token": "test"}).status_code == 200
+    assert client.get("/v1/plaid/items").json()["items"] == [{"item_id": "item-one", "status": "active"}]
+
+
+def test_exchange_recovers_when_secret_write_committed_but_response_lost(sandbox, monkeypatch):
+    original = boto3.client
+    ssm = original("ssm")
+    put = ssm.put_parameter
+    def lost_response(**kwargs):
+        put(**kwargs)
+        raise EndpointConnectionError(endpoint_url="https://example.invalid")
+
+    monkeypatch.setattr(ssm, "put_parameter", lost_response)
+    monkeypatch.setattr(boto3, "client", lambda service, *args, **kwargs:
+                        ssm if service == "ssm" else original(service, *args, **kwargs))
+    client = TestClient(app)
+    assert client.post("/v1/plaid/exchange", json={"public_token": "test"}).status_code == 200
+    assert client.get("/v1/plaid/items").json()["items"] == [{"item_id": "item-one", "status": "active"}]
