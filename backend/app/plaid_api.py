@@ -65,6 +65,35 @@ def enqueue(item_id, *, source=None):
                                      MessageBody=json.dumps(payload))
 
 
+def delete_item_rows(item_id, owner, deadline):
+    """Remove item data in bounded, lease-checked batches; resume on retry."""
+    pk = f"PLAID#{item_id}"
+    args = {"KeyConditionExpression": Key("pk").eq(pk), "ConsistentRead": True, "Limit": 25}
+    while True:
+        page = table().query(**args)
+        rows = [row for row in page["Items"] if row["sk"] != "META"]
+        for start in range(0, len(rows), 8):
+            if time.monotonic() >= deadline:
+                return False
+            actions = [{"ConditionCheck": {
+                "TableName": os.environ["HOUSEHOLD_TABLE"],
+                "Key": serialize({"pk": pk, "sk": "META"}),
+                "ConditionExpression": "lease_owner = :owner AND lease_until > :now AND #status = :deleting",
+                "ExpressionAttributeNames": {"#status": "status"},
+                "ExpressionAttributeValues": serialize({":owner": owner, ":now": int(time.time()),
+                                                         ":deleting": "deleting"}),
+            }}]
+            actions.extend({"Delete": {"TableName": os.environ["HOUSEHOLD_TABLE"],
+                                       "Key": serialize({"pk": pk, "sk": row["sk"]})}}
+                           for row in rows[start:start + 8])
+            boto3.client("dynamodb").transact_write_items(TransactItems=actions)
+        if "LastEvaluatedKey" not in page:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+
 @router.post("/v1/plaid/link-token")
 def link_token(request: Request, response: Response):
     household_id = household(request, response)
@@ -155,6 +184,7 @@ def sync(item_id: str, request: Request, response: Response):
 
 @router.delete("/v1/plaid/items/{item_id}")
 def delete_item(item_id: str, request: Request, response: Response):
+    deadline = time.monotonic() + 18
     household_id = household(request, response)
     if not ITEM_ID.fullmatch(item_id):
         raise HTTPException(404, "Item not found")
@@ -170,7 +200,7 @@ def delete_item(item_id: str, request: Request, response: Response):
                                 "AND (attribute_not_exists(lease_until) OR lease_until < :now)",
             ExpressionAttributeNames={"#status": "status"},
             ExpressionAttributeValues={":household": household_id, ":owner": owner, ":now": now,
-                                       ":until": now + 600, ":active": "active", ":deleting": "deleting"},
+                                       ":until": now + 60, ":active": "active", ":deleting": "deleting"},
             ReturnValues="ALL_NEW",
         )["Attributes"]
     except ClientError as exc:
@@ -190,9 +220,11 @@ def delete_item(item_id: str, request: Request, response: Response):
             table().update_item(Key=key, UpdateExpression="SET remote_removed = :yes",
                                 ConditionExpression="lease_owner = :owner AND lease_until > :now",
                                 ExpressionAttributeValues={":yes": True, ":owner": owner, ":now": int(time.time())})
-        for row in query_all(f"PLAID#{item_id}", ""):
-            if row["sk"] != "META":
-                table().delete_item(Key={"pk": row["pk"], "sk": row["sk"]})
+        if not delete_item_rows(item_id, owner, deadline) or time.monotonic() >= deadline:
+            table().update_item(Key=key, UpdateExpression="REMOVE lease_owner, lease_until",
+                                ConditionExpression="lease_owner = :owner",
+                                ExpressionAttributeValues={":owner": owner})
+            return {"status": "cleanup_pending"}
         try:
             boto3.client("ssm").delete_parameter(Name=f"{os.environ['PLAID_PARAMETER_PREFIX']}/items/{item_id}")
         except ClientError as exc:
