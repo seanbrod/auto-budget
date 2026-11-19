@@ -42,7 +42,9 @@ def me(request: Request, response: Response) -> dict[str, str]:
     return {"household_id": household_id}
 
 
+from app.budget_api import router as budget_router
 from app.plaid_api import router as plaid_router
 
 app.include_router(plaid_router)
+app.include_router(budget_router)
 handler = Mangum(app, lifespan="off")

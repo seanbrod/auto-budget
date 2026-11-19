@@ -30,7 +30,7 @@ Last updated: 2026-11-19. This is a snapshot; inspect the repository, current AW
 
 ## What to do next
 
-1. Begin Phase 4 in Sandbox: inspect the current transaction schema and agree on a small end-to-end slice before implementing. Household-scoped categories and monthly budgets, followed by a month view, are a possible starting point, not a settled decision. Preserve household isolation and define spending and other calculation rules before displaying totals.
+1. Continue Phase 4 in Sandbox. The local first slice adds household-scoped category creation/renaming and monthly allowances in integer cents, with a month selector; it does not calculate spending. These changes require deployment before the local frontend can use the new routes. Define classification, refunds, pending-to-posted transitions, and historical behavior before implementing spending totals. Transaction overrides, category/rule management, transaction browsing, annual reporting, forecasts, and the remaining dashboard views are not yet implemented.
 2. Investigate the previously observed queued-sync failures if they recur; their cause remains unknown. Live signed webhook delivery and accelerated scheduled recovery have been verified; the actual seven-day rule has not been observed firing.
 3. Before Phase 5 enables real accounts, review remaining recovery, security, and production-readiness gaps, the user's actual Plaid access and pricing, and AWS free-tier eligibility and likely charges. The implementation remains fixed to Plaid Sandbox until that review.
 

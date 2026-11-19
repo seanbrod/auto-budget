@@ -62,7 +62,7 @@ Run `ruff check .` and `pytest` in `backend`, and `npm run build` in `frontend`.
 
 To build the Lambda archive, run `python package_lambda.py` from `backend` on Linux with Python 3.12 and the target Lambda architecture. It creates `backend/dist/api.zip`; CI also checks packaging. This does not deploy the API.
 
-Plaid and financial data will be added in later phases. Do not enter financial credentials into this scaffold.
+Phase 4 is in progress: the local dashboard can create categories and save monthly allowances after the new API routes are deployed. It does not yet calculate spending. Use Sandbox data only; do not enter real financial credentials.
 
 ## Phase 3 development status
 
