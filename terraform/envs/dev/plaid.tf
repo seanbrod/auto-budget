@@ -6,6 +6,20 @@ resource "aws_sqs_queue" "plaid_dlq" {
   sqs_managed_sse_enabled   = true
 }
 
+resource "aws_apigatewayv2_route" "budget" {
+  for_each = toset([
+    "GET /v1/categories", "POST /v1/categories", "PUT /v1/categories/{category_id}",
+    "GET /v1/budgets/{month}", "PUT /v1/budgets/{month}",
+    "GET /v1/transactions", "PUT /v1/transactions/{transaction_id}/classification", "GET /v1/dashboard"
+  ])
+  api_id               = aws_apigatewayv2_api.app.id
+  route_key            = each.value
+  target               = "integrations/${aws_apigatewayv2_integration.api.id}"
+  authorization_type   = "JWT"
+  authorizer_id        = aws_apigatewayv2_authorizer.cognito.id
+  authorization_scopes = ["openid"]
+}
+
 resource "aws_sqs_queue" "plaid" {
   name                       = "${local.app_name}-plaid"
   visibility_timeout_seconds = 1800
