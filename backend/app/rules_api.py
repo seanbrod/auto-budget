@@ -27,6 +27,12 @@ router = APIRouter()
 APPLY_BATCH_SIZE = 25
 
 
+class ForecastAction(BaseModel):
+    entry_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    window_days: int = Field(ge=0, le=31, strict=True)
+    amount_tolerance_cents: int | None = Field(default=None, ge=0, le=100_000_000, strict=True)
+
+
 class RuleInput(BaseModel):
     field: Literal["merchant_name", "name"]
     operator: Literal["exact", "contains", "regex"]
@@ -35,10 +41,13 @@ class RuleInput(BaseModel):
     account_id: str | None = Field(default=None, max_length=128)
     priority: int = Field(default=100, ge=0, le=10000, strict=True)
     enabled: bool = True
-    classification: Classification
+    classification: Classification | None = None
+    forecast: ForecastAction | None = None
 
     @model_validator(mode="after")
     def normalize_value(self):
+        if not self.classification and not self.forecast:
+            raise ValueError("At least one action is required")
         self.value = self.value.strip() if self.operator == "regex" else normalized(self.value)
         if not self.value:
             raise ValueError("Match value is required")
@@ -72,9 +81,15 @@ def existing_rule(owner, rule_id):
 
 
 def validate_category(owner, body):
-    category_id = body.classification.category_id
+    category_id = body.classification.category_id if body.classification else None
     if category_id and not table().get_item(Key=category_key(owner, category_id), ConsistentRead=True).get("Item"):
         raise HTTPException(422, "Unknown category")
+    if body.forecast:
+        from app.forecast_api import key as expected_key
+
+        entry = table().get_item(Key=expected_key(owner, body.forecast.entry_id), ConsistentRead=True).get("Item")
+        if not entry or entry.get("retired_on"):
+            raise HTTPException(422, "Unknown or retired expected entry")
 
 
 def replace_rule(owner, rule_id, row, new_row):
@@ -131,7 +146,9 @@ def delete_rule(rule_id: str, request: Request, response: Response):
 
 def candidates(owner, rule_id):
     selected = existing_rule(owner, rule_id)
-    all_rules = rules(owner)
+    if not selected.get("classification"):
+        raise HTTPException(422, "Rule has no classification action")
+    all_rules = [rule for rule in rules(owner) if rule.get("classification")]
     overrides = household_overrides(owner)
     result = []
     for transaction in visible_transactions(household_transactions(owner)):

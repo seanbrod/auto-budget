@@ -57,6 +57,7 @@ def test_update_requires_later_effective_date_and_saves_history(monkeypatch):
     db.get_item.return_value = {"Item": {"entry": original}}
     monkeypatch.setattr(forecast_api, "household", lambda request, response: "mine")
     monkeypatch.setattr(forecast_api, "table", lambda: db)
+    monkeypatch.setattr(forecast_api, "query_all", lambda pk, prefix: [])
     client = TestClient(app)
     path = "/v1/expected/" + "a" * 32
     assert client.put(path, json={**original, "effective_date": "2026-01-31"}).status_code == 422
@@ -76,6 +77,7 @@ def test_retirement_keeps_history_and_stops_occurrences(monkeypatch):
     db.get_item.return_value = {"Item": row}
     monkeypatch.setattr(forecast_api, "household", lambda request, response: "mine")
     monkeypatch.setattr(forecast_api, "table", lambda: db)
+    monkeypatch.setattr(forecast_api, "query_all", lambda pk, prefix: [])
     client = TestClient(app)
     path = "/v1/expected/" + "a" * 32
     assert client.delete(path + "?effective_date=2026-02-01").status_code == 422

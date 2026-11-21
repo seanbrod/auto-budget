@@ -53,6 +53,7 @@ def effective_overrides(owner, rows):
     records = query_all(f"HOUSEHOLD#{owner}", "RULE#")
     rules = [version for row in records for version in row.get("history", [])]
     rules.extend(row["rule"] for row in records if not row.get("deleted"))
+    rules = [rule for rule in rules if rule.get("classification")]
     for transaction in rows:
         if classification(transaction, overrides):
             continue

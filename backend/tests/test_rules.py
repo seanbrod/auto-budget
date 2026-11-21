@@ -94,3 +94,21 @@ def test_rule_preview_apply_and_household_isolation(monkeypatch):
         assert stored["deleted"] and len(stored["history"]) == 1
         monkeypatch.setattr(rules_api, "household", lambda request, response: "other")
         assert client.post(f"/v1/category-rules/{identifier}/preview").status_code == 404
+
+
+def test_forecast_action_is_optional_and_household_scoped(monkeypatch):
+    from unittest.mock import Mock
+
+    db = Mock()
+    db.get_item.return_value = {}
+    monkeypatch.setattr(rules_api, "household", lambda request, response: "mine")
+    monkeypatch.setattr(rules_api, "table", lambda: db)
+    client = TestClient(app)
+    body = {"field": "name", "operator": "exact", "value": "rent", "direction": "outgoing",
+            "forecast": {"entry_id": "a" * 32, "window_days": 5, "amount_tolerance_cents": None}}
+    assert client.post("/v1/category-rules", json=body).status_code == 422
+    db.get_item.return_value = {"Item": {"entry": {"name": "Rent"}}}
+    assert client.post("/v1/category-rules", json=body).status_code == 201
+    assert client.post("/v1/category-rules", json=body | {"forecast": None}).status_code == 422
+    assert client.post("/v1/category-rules", json=body | {"forecast": body["forecast"] | {"window_days": 32}}).status_code == 422
+    assert db.get_item.call_args.kwargs["Key"]["pk"] == "HOUSEHOLD#mine"
