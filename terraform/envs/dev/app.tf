@@ -100,7 +100,7 @@ data "aws_iam_policy_document" "api" {
     resources = ["${aws_cloudwatch_log_group.api.arn}:*", "${aws_cloudwatch_log_group.plaid_worker.arn}:*"]
   }
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem", "dynamodb:ConditionCheckItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem", "dynamodb:ConditionCheckItem"]
     resources = [aws_dynamodb_table.app.arn]
   }
   statement {
