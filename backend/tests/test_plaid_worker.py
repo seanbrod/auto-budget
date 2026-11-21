@@ -8,6 +8,7 @@ from app.plaid_sync import SyncUpdate
 
 def prepare(monkeypatch):
     db = MagicMock()
+    db.get_item.return_value = {}
     client = Mock()
     client.call.return_value = {"accounts": [{"account_id": "account-1"}]}
     monkeypatch.setenv("HOUSEHOLD_TABLE", "test-table")
@@ -16,7 +17,26 @@ def prepare(monkeypatch):
     monkeypatch.setattr(plaid_worker, "plaid_client", lambda: client)
     monkeypatch.setattr(plaid_worker, "item_token", lambda item: "token")
     monkeypatch.setattr(plaid_worker, "clean_orphaned_journals", lambda *_: None)
+    monkeypatch.setattr(plaid_worker, "existing_transaction_rows", lambda *_: {})
     return db, client
+
+
+def test_transaction_snapshot_batch_retries_unprocessed_keys(monkeypatch):
+    dynamodb = Mock()
+    retry = {"test-table": {"Keys": [{"pk": "PLAID#item-1", "sk": "TRANSACTION#one"}],
+                            "ConsistentRead": True}}
+    dynamodb.batch_get_item.side_effect = [
+        {"Responses": {"test-table": []}, "UnprocessedKeys": retry},
+        {"Responses": {"test-table": [{"pk": "PLAID#item-1", "sk": "TRANSACTION#one", "first_seen_ns": 5}]}},
+    ]
+    monkeypatch.setenv("HOUSEHOLD_TABLE", "test-table")
+    monkeypatch.setattr(plaid_worker.boto3, "resource", lambda _: dynamodb)
+    monkeypatch.setattr(plaid_worker.time, "sleep", lambda _: None)
+    result = plaid_worker.existing_transaction_rows("item-1", [
+        {"kind": "TRANSACTION", "data": {"transaction_id": "one"}},
+    ])
+    assert result["TRANSACTION#one"]["first_seen_ns"] == 5
+    assert dynamodb.batch_get_item.call_count == 2
 
 
 def test_cursor_advances_only_after_writes(monkeypatch):

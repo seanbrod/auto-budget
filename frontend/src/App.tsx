@@ -3,6 +3,7 @@ import { accessToken, apiUrl, completeSignIn, configured, signIn, signOut } from
 import PlaidAccounts from './PlaidAccounts'
 import Budget from './Budget'
 import Transactions from './Transactions'
+import Rules from './Rules'
 
 function App() {
   const [status, setStatus] = useState('Checking sign-in…')
@@ -35,6 +36,7 @@ function App() {
       </section>
       {signedIn && <Budget />}
       {signedIn && <Transactions />}
+      {signedIn && <Rules />}
     </main></div>
 }
 

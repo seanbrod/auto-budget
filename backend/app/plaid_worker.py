@@ -101,6 +101,37 @@ def checked_batches(item_id, owner, operations):
         checked_write(item_id, owner, batch)
 
 
+def existing_transaction_rows(item_id, staged):
+    """Read prior snapshots in bounded batches before any journal writes."""
+    identifiers = set()
+    for row in staged:
+        if row["kind"] != "TRANSACTION":
+            continue
+        entry = row["data"]
+        identifiers.add(entry["transaction_id"])
+        if entry.get("pending_transaction_id"):
+            identifiers.add(entry["pending_transaction_id"])
+    keys = [{"pk": f"PLAID#{item_id}", "sk": f"TRANSACTION#{identifier}"}
+            for identifier in sorted(identifiers)]
+    table_name = os.environ["HOUSEHOLD_TABLE"]
+    result = {}
+    dynamodb = boto3.resource("dynamodb")
+    for start in range(0, len(keys), 100):
+        request = {table_name: {"Keys": keys[start:start + 100], "ConsistentRead": True,
+                                "ProjectionExpression": "pk, sk, first_seen_ns, rule_match_data"}}
+        for attempt in range(6):
+            response = dynamodb.batch_get_item(RequestItems=request)
+            for item in response.get("Responses", {}).get(table_name, []):
+                result[item["sk"]] = item
+            request = response.get("UnprocessedKeys", {})
+            if not request:
+                break
+            time.sleep(min(0.05 * 2**attempt, 1))
+        else:
+            raise RuntimeError("Could not read transaction snapshots")
+    return result
+
+
 def clean_orphaned_journals(item_id, owner, pending):
     """Remove abandoned staging rows, preserving any journal awaiting replay."""
     keep_prefix = f"STAGED#{pending['id']}#" if pending else None
@@ -184,6 +215,7 @@ def sync_item(item_id):
             query["ExclusiveStartKey"] = result["LastEvaluatedKey"]
         if len(staged) != pending["count"]:
             raise RuntimeError("Incomplete synchronization journal")
+        previous_rows = existing_transaction_rows(item_id, staged)
         replay_writes = []
         for row in staged:
             kind, entry = row["kind"], row["data"]
@@ -193,8 +225,19 @@ def sync_item(item_id):
             if kind in ("REMOVE", "REMOVE_ACCOUNT"):
                 operation = {"Delete": {"TableName": os.environ["HOUSEHOLD_TABLE"], "Key": serialize(record_key)}}
             elif kind in ("ACCOUNT", "TRANSACTION"):
+                record = record_key | {"data": entry}
+                if kind == "TRANSACTION":
+                    previous = previous_rows.get(record_key["sk"], {})
+                    if not previous and entry.get("pending_transaction_id"):
+                        previous = previous_rows.get(f"TRANSACTION#{entry['pending_transaction_id']}", {})
+                    # Preserve the first import time across Plaid modifications. Existing
+                    # rows without this field remain historical for new rules.
+                    record["first_seen_ns"] = previous.get("first_seen_ns", 0) if previous else time.time_ns()
+                    match_data = {key: entry[key] for key in ("name", "merchant_name", "account_id", "amount")
+                                  if key in entry}
+                    record["rule_match_data"] = previous.get("rule_match_data", match_data) if previous else match_data
                 operation = {"Put": {"TableName": os.environ["HOUSEHOLD_TABLE"],
-                                     "Item": serialize(record_key | {"data": entry})}}
+                                     "Item": serialize(record)}}
             else:
                 raise ValueError("Invalid synchronization journal")
             replay_writes.append(operation)

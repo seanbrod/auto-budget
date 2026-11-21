@@ -20,6 +20,8 @@ cd backend
 python -m pip install -e '.[dev]'
 ```
 
+Repeat the install after pulling dependency changes. Transaction rule patterns use RE2; lookaround and backreferences are not supported.
+
 Start the frontend:
 
 ```sh
