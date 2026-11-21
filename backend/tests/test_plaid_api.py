@@ -39,3 +39,17 @@ def test_webhook_rejects_unsigned_body_before_queueing(monkeypatch):
     response = TestClient(app).post("/v1/webhooks/plaid", json={"item_id": "one"})
     assert response.status_code == 401
     queue.assert_not_called()
+
+
+def test_accounts_expose_sync_time_and_reject_incomplete_sync(monkeypatch):
+    db = Mock()
+    meta = {"household_id": "mine", "status": "active", "last_sync": 12345}
+    db.get_item.return_value = {"Item": meta}
+    monkeypatch.setattr(plaid_api, "table", lambda: db)
+    monkeypatch.setattr(plaid_api, "household", lambda req, resp: "mine")
+    monkeypatch.setattr(plaid_api, "query_all", lambda pk, prefix: ([{"item_id": "test"}] if prefix == "PLAID#"
+                                                                   else [{"data": {"account_id": "account"}}]))
+    client = TestClient(app)
+    assert client.get("/v1/accounts").json()["accounts"][0]["sync_completed_at"] == 12345
+    db.get_item.return_value = {"Item": meta | {"pending_sync": {"count": 1}}}
+    assert client.get("/v1/accounts").status_code == 503

@@ -53,6 +53,7 @@ def me(request: Request, response: Response) -> dict[str, str]:
 from app.budget_api import router as budget_router
 from app.forecast_api import router as forecast_router
 from app.forecast_matches import router as forecast_matches_router
+from app.forecast_projection import router as forecast_projection_router
 from app.plaid_api import router as plaid_router
 from app.rules_api import router as rules_router
 from app.transactions_api import router as transactions_router
@@ -61,6 +62,7 @@ app.include_router(plaid_router)
 app.include_router(budget_router)
 app.include_router(forecast_router)
 app.include_router(forecast_matches_router)
+app.include_router(forecast_projection_router)
 app.include_router(transactions_router)
 app.include_router(rules_router)
 handler = Mangum(app, lifespan="off")

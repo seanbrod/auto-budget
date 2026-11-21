@@ -257,7 +257,10 @@ def accounts(request: Request, response: Response):
         item = table().get_item(Key={"pk": f"PLAID#{item_id}", "sk": "META"},
                                 ConsistentRead=True).get("Item", {})
         if item.get("household_id") == household_id and item.get("status") == "active":
-            accounts.extend(row["data"] for row in query_all(f"PLAID#{item_id}", "ACCOUNT#"))
+            if item.get("pending_sync"):
+                raise HTTPException(503, "Account synchronization in progress; try again shortly")
+            accounts.extend(row["data"] | {"sync_completed_at": int(item["last_sync"]) if item.get("last_sync") else None}
+                            for row in query_all(f"PLAID#{item_id}", "ACCOUNT#"))
     return {"accounts": accounts}
 
 

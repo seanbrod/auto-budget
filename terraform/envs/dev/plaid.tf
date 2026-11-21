@@ -8,7 +8,7 @@ resource "aws_sqs_queue" "plaid_dlq" {
 
 resource "aws_apigatewayv2_route" "budget" {
   for_each = toset([
-    "GET /v1/forecast-matches", "POST /v1/forecast-matches", "DELETE /v1/forecast-matches/{transaction_id}",
+    "GET /v1/forecast", "GET /v1/forecast-matches", "POST /v1/forecast-matches", "DELETE /v1/forecast-matches/{transaction_id}",
     "GET /v1/expected", "POST /v1/expected", "PUT /v1/expected/{entry_id}", "DELETE /v1/expected/{entry_id}",
     "GET /v1/categories", "POST /v1/categories", "PUT /v1/categories/{category_id}",
     "GET /v1/budgets/{month}", "PUT /v1/budgets/{month}",
