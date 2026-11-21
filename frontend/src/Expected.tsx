@@ -44,7 +44,7 @@ export default function Expected() {
   }
   return <section className="overview" aria-label="Expected income and expenses">
     <div className="section-head"><div><p className="eyebrow">FORECAST SETUP</p><h2>Expected income and expenses</h2></div></div>
-    <p>Set up salary, bills and other expected cash flows. Forecast balances are not available yet. Match transactions manually or create a forecast rule in the transactions section. Retiring an entry preserves its history and stops occurrences on the chosen date.</p>
+    <p>Set up salary, bills and other expected cash flows. Match transactions manually or create a forecast rule in the transactions section. Retiring an entry preserves its history and stops occurrences on the chosen date.</p>
     <form onSubmit={event => void save(event)}>
       <p><label>Name <input required maxLength={80} value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label></p>
       <p><label>Type <select value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value as Draft['kind'] })}><option value="income">Income</option><option value="expense">Expense</option></select></label> <label>Amount ($) <input required inputMode="decimal" value={draft.amount} onChange={e => setDraft({ ...draft, amount: e.target.value })} /></label></p>
