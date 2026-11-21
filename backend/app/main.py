@@ -52,9 +52,11 @@ def me(request: Request, response: Response) -> dict[str, str]:
 
 from app.budget_api import router as budget_router
 from app.plaid_api import router as plaid_router
+from app.rules_api import router as rules_router
 from app.transactions_api import router as transactions_router
 
 app.include_router(plaid_router)
 app.include_router(budget_router)
 app.include_router(transactions_router)
+app.include_router(rules_router)
 handler = Mangum(app, lifespan="off")

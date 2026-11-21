@@ -8,6 +8,7 @@ from pydantic import BaseModel, model_validator
 from app.budget_api import IDENTIFIER, budget_key, category_key
 from app.plaid_api import ITEM_ID, household, query_all
 from app.plaid_worker import table
+from app.rule_matching import winning_rule
 from app.spending import calculate_month, classification, visible_transactions
 
 router = APIRouter()
@@ -38,7 +39,8 @@ def household_transactions(owner):
         if meta.get("pending_sync"):
             raise HTTPException(503, "Account synchronization in progress; try again shortly")
         for row in query_all(f"PLAID#{item_id}", "TRANSACTION#"):
-            transactions.append(row["data"] | {"item_id": item_id})
+            transactions.append(row["data"] | {"item_id": item_id, "first_seen_ns": row.get("first_seen_ns", 0),
+                                               "_rule_match_data": row.get("rule_match_data", row["data"])})
     return transactions
 
 
@@ -46,13 +48,27 @@ def household_overrides(owner):
     return {row["sk"][9:]: row["choice"] for row in query_all(f"HOUSEHOLD#{owner}", "OVERRIDE#")}
 
 
+def effective_overrides(owner, rows):
+    overrides = household_overrides(owner)
+    records = query_all(f"HOUSEHOLD#{owner}", "RULE#")
+    rules = [version for row in records for version in row.get("history", [])]
+    rules.extend(row["rule"] for row in records if not row.get("deleted"))
+    for transaction in rows:
+        if classification(transaction, overrides):
+            continue
+        rule = winning_rule(rules, transaction, new_only=True)
+        if rule:
+            overrides[transaction["transaction_id"]] = rule["classification"]
+    return overrides
+
+
 @router.get("/v1/transactions")
 def transactions(request: Request, response: Response, month: str | None = None):
     owner = household(request, response)
     if month is not None:
         budget_key(owner, month)
-    overrides = household_overrides(owner)
     rows = visible_transactions(household_transactions(owner))
+    overrides = effective_overrides(owner, rows)
     if month is not None:
         rows = [row for row in rows if str(row.get("date", "")).startswith(month + "-")]
     rows.sort(key=lambda row: (str(row.get("date", "")), str(row.get("transaction_id", ""))), reverse=True)
@@ -80,7 +96,8 @@ def dashboard(request: Request, response: Response, month: str):
     owner = household(request, response)
     key = budget_key(owner, month)
     budget = table().get_item(Key=key, ConsistentRead=True).get("Item", {})
-    totals, unclassified = calculate_month(household_transactions(owner), household_overrides(owner), month)
+    rows = household_transactions(owner)
+    totals, unclassified = calculate_month(rows, effective_overrides(owner, rows), month)
     allowances = {k: int(v) for k, v in budget.get("allowances", {}).items()}
     ids = set(allowances) | set(totals)
     return {"month": month, "categories": {key: {"planned_cents": allowances.get(key, 0),
