@@ -4,6 +4,7 @@ import PlaidAccounts from './PlaidAccounts'
 import Budget from './Budget'
 import Transactions from './Transactions'
 import Rules from './Rules'
+import Expected from './Expected'
 
 function App() {
   const [status, setStatus] = useState('Checking sign-in…')
@@ -37,6 +38,7 @@ function App() {
       {signedIn && <Budget />}
       {signedIn && <Transactions />}
       {signedIn && <Rules />}
+      {signedIn && <Expected />}
     </main></div>
 }
 
