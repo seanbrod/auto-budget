@@ -96,6 +96,12 @@ def public(row):
             "history": row.get("history", []), "retired_on": row.get("retired_on")}
 
 
+def reject_matched_occurrences(owner, entry_id, effective):
+    rows = query_all(f"HOUSEHOLD#{owner}", f"FORECAST_OCC#{entry_id}#")
+    if any(row["match"]["occurrence_date"] >= effective for row in rows):
+        raise HTTPException(409, "Unmatch affected occurrences before changing this entry")
+
+
 def versioned_occurrences(row, first, last):
     """Expand each definition only within its inclusive effective interval."""
     if row.get("retired_on"):
@@ -142,6 +148,7 @@ def update_expected(entry_id: str, body: ExpectedUpdate, request: Request, respo
     previous = row.get("effective_date", row["entry"]["start_date"])
     if effective <= previous:
         raise HTTPException(422, "Effective date must be after the previous version")
+    reject_matched_occurrences(owner, entry_id, effective)
     history = row.get("history", [])
     if len(history) >= 200:
         raise HTTPException(422, "Too many versions")
@@ -180,6 +187,7 @@ def retire_expected(entry_id: str, effective_date: date, request: Request, respo
         raise HTTPException(409, "Entry is already retired")
     if retired < row.get("effective_date", row["entry"]["start_date"]):
         raise HTTPException(422, "Retirement cannot precede the latest version")
+    reject_matched_occurrences(owner, entry_id, retired)
     revision = int(row.get("revision", 0))
     condition = "revision = :revision" if revision else "attribute_not_exists(revision)"
     values = {":retired": retired, ":next": revision + 1}
